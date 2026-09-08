@@ -4,8 +4,22 @@
   <div class="row justify-content-center">
     <div class="col-lg-8">
       <h1 class="h4 mb-3">Rendered output</h1>
-      <pre class="border rounded p-3 bg-body">{{ output }}</pre>
+      <pre id="output" class="border rounded p-3 bg-body">{{ output }}</pre>
+
+      <div id="output-actions" class="d-flex align-items-center gap-2 mb-3" hidden>
+        <button type="button" id="copy-output" class="btn btn-outline-secondary btn-sm">
+          Copy to clipboard
+        </button>
+        <button type="button" id="download-output" class="btn btn-outline-secondary btn-sm">
+          Download .txt
+        </button>
+        <span id="output-status" class="small text-body-secondary" role="status" aria-live="polite"></span>
+      </div>
+
       <a href="{{ url_for('dynaform.index') }}" class="btn btn-primary">Fill another template</a>
     </div>
   </div>
+{% endblock %}
+{% block scripts %}
+  <script src="{{ url_for('static', filename='js/output_actions.js') }}"></script>
 {% endblock %}

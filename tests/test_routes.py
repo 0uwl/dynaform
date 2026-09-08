@@ -170,6 +170,54 @@ class TestRender:
         assert "super-secret-value" not in caplog.text
 
 
+class TestOutputActions:
+    def _render(self, client):
+        resp = client.post("/", data={"template_text": TEMPLATE, "submit": "Parse template"})
+        template_source = _extract(resp.data.decode(), "template_source")
+        return client.post(
+            "/render",
+            data={
+                "template_source": template_source,
+                "S_username": "Alice",
+                "N_user_age": "34",
+                "R_color": "blue",
+                "submit": "Render template",
+            },
+        )
+
+    def test_result_page_offers_copy_and_download(self, client):
+        html = self._render(client).data.decode()
+        assert 'id="copy-output"' in html
+        assert 'id="download-output"' in html
+        assert "js/output_actions.js" in html
+
+    def test_output_carries_id_the_actions_read_from(self, client):
+        html = self._render(client).data.decode()
+        assert 'id="output"' in html
+
+    def test_actions_hidden_until_script_reveals_them(self, client):
+        # Buttons ship hidden so they are never dead controls without JS.
+        html = self._render(client).data.decode()
+        assert re.search(r'id="output-actions"[^>]*hidden', html)
+
+    def test_output_is_escaped_in_the_page(self, client):
+        # The copy/download buttons read textContent, so the escaped markup
+        # here round-trips back to the original text in the browser.
+        resp = client.post("/", data={"template_text": "{{ S_x }}", "submit": "Parse template"})
+        template_source = _extract(resp.data.decode(), "template_source")
+        resp = client.post(
+            "/render",
+            data={
+                "template_source": template_source,
+                "S_x": "<script>alert(1)</script>",
+                "submit": "Render template",
+            },
+        )
+        html = resp.data.decode()
+        assert "<script>alert(1)</script>" not in html
+        assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+
+
 class TestRenderSandboxing:
     def test_sandbox_blocks_attribute_access_ssti(self, client):
         template_source = "{{ S_x.__class__.__init__.__globals__ }}"
