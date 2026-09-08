@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Fill in template{% endblock %}
+{% block content %}
+  <div class="row justify-content-center">
+    <div class="col-lg-8">
+      <form method="post" action="{{ url_for('dynaform.render') }}" novalidate>
+        {{ form.hidden_tag() }}
+
+        {% for item in items %}
+          {% set spec = item.spec %}
+          <div class="mb-3"{% if spec.parent %} data-parent="{{ spec.parent }}" hidden{% endif %}>
+
+            {% if item.kind == "radio" %}
+              {% set bound = form["R_" + spec.name] %}
+              <fieldset>
+                <legend class="col-form-label">{{ spec.label }}</legend>
+                {% for subfield in bound %}
+                  <div class="form-check">
+                    {{ subfield(class="form-check-input") }}
+                    {{ subfield.label(class="form-check-label") }}
+                  </div>
+                {% endfor %}
+              </fieldset>
+
+            {% elif spec.prefix == "B" %}
+              {% set bound = form[spec.var_name] %}
+              <div class="form-check">
+                {{ bound(class="form-check-input") }}
+                {{ bound.label(class="form-check-label") }}
+              </div>
+
+            {% else %}
+              {% set bound = form[spec.var_name] %}
+              {{ bound.label(class="form-label") }}
+              {{ bound(class="form-control" + (" is-invalid" if bound.errors else ""),
+                        autocomplete=("off" if spec.prefix == "P" else "on")) }}
+            {% endif %}
+
+            {% for error in bound.errors %}
+              <div class="invalid-feedback d-block">{{ error }}</div>
+            {% endfor %}
+          </div>
+        {% endfor %}
+
+        {{ form.submit(class="btn btn-primary") }}
+      </form>
+    </div>
+  </div>
+{% endblock %}
+{% block scripts %}
+  <script src="{{ url_for('static', filename='js/conditional.js') }}"></script>
+{% endblock %}

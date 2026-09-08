@@ -1,0 +1,17 @@
+[Unit]
+Description=DynaForm
+After=network-online.target
+
+[Container]
+Image=localhost/dynaform:latest
+PublishPort=8000:8000
+Environment=BIND_HOST=0.0.0.0
+Environment=BIND_PORT=8000
+Environment=GUNICORN_WORKERS=2
+Secret=dynaform-secret-key,type=env,target=SECRET_KEY
+
+[Service]
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

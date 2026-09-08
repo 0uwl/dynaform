@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}DynaForm{% endblock %}
+{% block content %}
+  <div class="row justify-content-center">
+    <div class="col-lg-8">
+      <p class="lead">Upload a Jinja2 template (or paste its text) and DynaForm builds a form
+        for its <code>S_</code>/<code>P_</code>/<code>N_</code>/<code>B_</code>/<code>R_</code>
+        variables. Nothing is stored -- it only renders the output.</p>
+
+      <form method="post" enctype="multipart/form-data" novalidate>
+        {{ form.hidden_tag() }}
+
+        <div class="mb-3">
+          {{ form.template_file.label(class="form-label") }}
+          {{ form.template_file(class="form-control" + (" is-invalid" if form.template_file.errors else "")) }}
+          {% for error in form.template_file.errors %}
+            <div class="invalid-feedback">{{ error }}</div>
+          {% endfor %}
+        </div>
+
+        <div class="mb-3">
+          {{ form.template_text.label(class="form-label") }}
+          {{ form.template_text(class="form-control", rows=10, placeholder="Hello {{ S_name }}, you are {{ N_age }}.") }}
+        </div>
+
+        {{ form.submit(class="btn btn-primary") }}
+      </form>
+    </div>
+  </div>
+{% endblock %}
