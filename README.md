@@ -9,7 +9,7 @@ result. The input type of each field comes from a prefix on the variable name, s
 itself is the only thing you have to write.
 
 From the result page you can copy the rendered output to your clipboard or save it as a `.txt`
-file. Both run in the browser against the text already on the page, so the output never travels
+file. Both options run in the browser against the text already on the page, so the output never travels
 back to the server.
 
 Nothing is stored. There is no database, no session store, and no user content written to disk.
@@ -29,7 +29,7 @@ a variable that doesn't match is rejected with an error naming the offending var
 | `R_`   | radio      | `R_color_red`  |
 
 Labels are derived from the name: the prefix is dropped, underscores become spaces, and only the
-first word is capitalized (`N_user_age` → "User age"). Fields appear in the order the variables
+first word is capitalized (`N_user_age` -> "User age"). Fields appear in the order the variables
 first occur in the template source.
 
 ### Radio groups
@@ -73,7 +73,7 @@ All configuration is by environment variable.
 | `GUNICORN_WORKERS`   | `2`        | Number of gunicorn workers (container only).                 |
 
 Logs go to stdout only. Template accepted/rejected, validation failures, and render outcomes are
-logged; submitted values never are.
+logged but never the submitted values.
 
 ## Running it locally
 
@@ -98,7 +98,7 @@ Then open <http://127.0.0.1:5000>.
 To run it the way the container does, set a real key and use gunicorn:
 
 ```bash
-export SECRET_KEY="$(python -c 'import secrets; print(secrets.token_hex(32))')"
+export SECRET_KEY="$(openssl rand -base64 32)"
 gunicorn -w 2 -b 127.0.0.1:8000 "app:create_app()"
 ```
 
