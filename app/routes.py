@@ -1,11 +1,12 @@
-"""HTTP routes: upload/paste -> parse & validate -> dynamic form -> render."""
+"""HTTP routes: choose/paste/upload -> parse & validate -> dynamic form -> render."""
 from __future__ import annotations
 
-from flask import Blueprint, current_app, flash, render_template, request
+from flask import Blueprint, Response, current_app, flash, render_template, request
 from jinja2.exceptions import SecurityError, TemplateError, UndefinedError
 from jinja2.sandbox import SandboxedEnvironment
 
 from .forms import UploadForm, build_dynamic_form
+from .template_library import read_template
 from .template_parser import TemplateValidationError, parse_template
 
 bp = Blueprint("dynaform", __name__)
@@ -26,20 +27,44 @@ def index():
     return render_template("index.html", form=UploadForm())
 
 
+@bp.route("/template-library", methods=["GET"])
+def library_template():
+    """Serve one directory template as plain text for the picker's JS.
+
+    Read-only and idempotent, so it carries no CSRF token; it exposes exactly
+    what the <select> on the first page already lists.
+    """
+    source = read_template(request.args.get("name", ""))
+    if source is None:
+        return Response("Template not found.", status=404, mimetype="text/plain")
+    return Response(
+        source,
+        mimetype="text/plain",
+        headers={"X-Content-Type-Options": "nosniff"},
+    )
+
+
 @bp.route("/", methods=["POST"])
 def parse():
     form = UploadForm()
     if not form.validate_on_submit():
         return render_template("index.html", form=form), 400
 
+    if form.load.data:
+        return _load_into_editor(form)
+
     uploaded = form.template_file.data
     if uploaded and uploaded.filename:
         source = uploaded.read().decode("utf-8", errors="replace")
+    elif form.template_text.data and form.template_text.data.strip():
+        source = form.template_text.data
     else:
-        source = form.template_text.data or ""
+        # Nothing typed or uploaded: fall back to the picked template, which
+        # is how "choose, then parse" works with scripting unavailable.
+        source = read_template(form.template_choice.data or "") or ""
 
     if not source.strip():
-        flash("Provide a template file or paste template text.", "danger")
+        flash("Choose a template, paste template text, or upload a file.", "danger")
         return render_template("index.html", form=UploadForm()), 400
 
     try:
@@ -61,6 +86,31 @@ def parse():
 
     dynamic_form = build_dynamic_form(parsed)(formdata=None, template_source=source)
     return render_template("form.html", form=dynamic_form, items=_ordered_items(parsed))
+
+
+def _load_into_editor(form: UploadForm):
+    """Copy the chosen directory template into the textarea and redisplay.
+
+    The no-JS path behind the "Load into editor" button. The text lands in the
+    form the user is looking at, so edits from here on are theirs alone --
+    nothing goes back to the file.
+    """
+    name = form.template_choice.data or ""
+    if not name:
+        flash("Choose a template to load first.", "warning")
+        return render_template("index.html", form=form), 400
+
+    source = read_template(name)
+    if source is None:
+        current_app.logger.info("Directory template not found: %s", name)
+        flash("That template is no longer available.", "danger")
+        # Redisplay the submitted form rather than a fresh one so anything
+        # already typed into the editor survives the failed load.
+        return render_template("index.html", form=form), 404
+
+    current_app.logger.info("Directory template loaded into editor: %s", name)
+    form.template_text.data = source
+    return render_template("index.html", form=form)
 
 
 @bp.route("/render", methods=["POST"])

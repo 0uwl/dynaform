@@ -8,6 +8,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app/ app/
 
+# Mount point for the operator's own templates. Created empty and owned by the
+# app user so a bind mount is optional: with nothing mounted the picker simply
+# has nothing to list.
+ENV TEMPLATE_DIR=/templates
+RUN mkdir -p /templates && chown dynaform:dynaform /templates
+
 USER dynaform
 EXPOSE 8000
 
