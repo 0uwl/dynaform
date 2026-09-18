@@ -18,3 +18,14 @@ def app():
 @pytest.fixture
 def client(app):
     return app.test_client()
+
+
+@pytest.fixture
+def library(app, tmp_path):
+    """Point TEMPLATE_DIR at an empty tmp dir and hand it back to the test.
+
+    Shares the function-scoped `app`, so a test can ask for both `library` and
+    `client` and the client sees the configured directory.
+    """
+    app.config["TEMPLATE_DIR"] = str(tmp_path)
+    return tmp_path

@@ -9,12 +9,14 @@ from wtforms import (
     IntegerField,
     PasswordField,
     RadioField,
+    SelectField,
     StringField,
     SubmitField,
     TextAreaField,
 )
 from wtforms.validators import InputRequired, Optional
 
+from .template_library import list_templates
 from .template_parser import ParsedTemplate
 
 FIELD_CLASSES = {
@@ -26,12 +28,24 @@ FIELD_CLASSES = {
 
 
 class UploadForm(FlaskForm):
+    template_choice = SelectField("Choose a template", validators=[Optional()])
+    template_text = TextAreaField("Template text", validators=[Optional()])
     template_file = FileField(
-        "Upload .j2 file",
+        "Upload a file",
         validators=[Optional(), FileAllowed(["j2", "txt"], "Template files only (.j2, .txt).")],
     )
-    template_text = TextAreaField("...or paste template text", validators=[Optional()])
+    load = SubmitField("Load into editor")
     submit = SubmitField("Parse template")
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Choices are rebuilt per instance so a template added to the mounted
+        # directory appears on the next page load, and so WTForms' own choice
+        # validation rejects any value that isn't currently on disk.
+        self.library_templates = list_templates()
+        self.template_choice.choices = [("", "-- none --")] + [
+            (template.name, template.label) for template in self.library_templates
+        ]
 
 
 def build_dynamic_form(parsed: ParsedTemplate) -> type[FlaskForm]:

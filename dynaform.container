@@ -8,6 +8,10 @@ PublishPort=8000:8000
 Environment=BIND_HOST=0.0.0.0
 Environment=BIND_PORT=8000
 Environment=GUNICORN_WORKERS=2
+# Host directory of ready-made .j2 templates, listed in the picker on the first
+# page. Read-only: DynaForm never writes to it. Adjust the host path to taste;
+# drop ":Z" on systems without SELinux.
+Volume=%h/dynaform-templates:/templates:ro,Z
 Secret=dynaform-secret-key,type=env,target=SECRET_KEY
 
 [Service]
