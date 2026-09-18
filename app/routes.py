@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from flask import Blueprint, current_app, flash, render_template, request
-from jinja2.exceptions import SecurityError, UndefinedError, TemplateError
+from jinja2.exceptions import SecurityError, TemplateError, UndefinedError
 from jinja2.sandbox import SandboxedEnvironment
 
 from .forms import UploadForm, build_dynamic_form
