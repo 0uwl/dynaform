@@ -3,14 +3,41 @@ name: CI/CD
 on:
   push:
     branches: [main]
+    # Publishing is driven by the tag, not by a GitHub release: the release is
+    # created at the end of a green run (see the publish job), so it means the
+    # image built, scanned clean and was pushed. Releasing on `release:
+    # published` had that backwards -- the release went public first and could
+    # end up pointing at an image that was never published.
+    tags: ['v*']
   pull_request:
     branches: [main]
-  release:
-    types: [published]
+  schedule:
+    # Weekly, deliberately off the hour: on-the-hour crons queue behind
+    # everybody else's and GitHub drops scheduled runs it cannot start.
+    - cron: '17 6 * * 1'
+  # So the weekly scan can be run on demand instead of waited for.
+  workflow_dispatch:
+
+# One policy for every place that scans. As three separate literals these
+# would drift, and a release gate that disagrees with the pull request gate is
+# worse than having only one of them.
+#
+# MEDIUM is included, which is wider than the Trivy docs' example, for a reason
+# specific to this app: every sandbox escape Jinja2 has shipped a fix for
+# (CVE-2024-56201, CVE-2024-56326, CVE-2025-27516) is rated MEDIUM by CVSS.
+# DynaForm renders user-supplied templates and its whole security model is
+# SandboxedEnvironment, so a CRITICAL/HIGH-only gate would wave through the one
+# bug class that actually breaks this app.
+env:
+  SCAN_SEVERITY: 'CRITICAL,HIGH,MEDIUM'
+  SCAN_VULN_TYPE: 'os,library'
 
 jobs:
   lint:
     name: Lint
+    # Code events only. The scheduled run re-scans the published image; there
+    # is no new code in it to lint.
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -41,6 +68,7 @@ jobs:
 
   test:
     name: Test
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -54,17 +82,105 @@ jobs:
       - name: Pytest
         run: pytest -v
 
-  publish:
-    name: Publish container
-    # Publishing on a release rather than on every push to main means the
-    # published image always corresponds to a tag someone chose to cut. lint
-    # and test are not gated to the release event, so they run on pushes and
-    # pull requests too -- and `needs` here keeps a red build from shipping.
-    needs: [lint, test]
-    if: github.event_name == 'release'
+  scan:
+    name: Scan image
+    # Pull requests and main. Not tags -- publish scans the very image it is
+    # about to push. Not the schedule -- scan-published covers that, against
+    # what people are actually running rather than a fresh build. Note that a
+    # scheduled run's github.ref is the default branch, so the event has to be
+    # checked as well as the ref.
+    #
+    # This gate can fail on a pull request that did not cause it: a CVE
+    # disclosed against the base image overnight fails everything until the
+    # base is rebuilt. That is the intended trade -- finding out on a pull
+    # request beats finding out while trying to cut a release -- but if it ever
+    # becomes noise, drop exit-code here and leave the release gate blocking.
+    if: >-
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v4
+      # amd64 only, and no QEMU: this image is never pushed, it exists to be
+      # read by trivy. Same gha cache as the publish job, so a release build
+      # after a scanned merge is mostly cache hits.
+      - name: Build image for scanning
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Containerfile
+          platforms: linux/amd64
+          load: true
+          tags: dynaform:${{ github.sha }}
+          cache-from: type=gha,scope=dynaform
+          cache-to: type=gha,scope=dynaform,mode=max
+      - name: Scan image for CVEs
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: dynaform:${{ github.sha }}
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: ${{ env.SCAN_VULN_TYPE }}
+          severity: ${{ env.SCAN_SEVERITY }}
+
+  scan-published:
+    name: Scan published image
+    # The one check a build-time gate cannot make: CVEs disclosed *after* the
+    # image shipped. Nothing in the repository changes when that happens, so
+    # only a clock can catch it -- and :latest is what a `podman pull` of
+    # dynaform.container's image resolves to, i.e. what is actually running on
+    # people's hosts.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # Before the first release there is no image to scan. Checking keeps
+      # that from being reported as a scan failure, which would train us to
+      # ignore a red weekly run.
+      - id: published
+        name: Check for a published image
+        run: |
+          if docker manifest inspect "ghcr.io/${{ github.repository }}:latest" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::No published :latest image yet -- nothing to scan."
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Scan published image for CVEs
+        if: steps.published.outputs.exists == 'true'
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ghcr.io/${{ github.repository }}:latest
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: ${{ env.SCAN_VULN_TYPE }}
+          severity: ${{ env.SCAN_SEVERITY }}
+
+  publish:
+    name: Publish container
+    # Publishing on a tag rather than on every push to main means the
+    # published image always corresponds to a version someone chose to cut.
+    # lint and test are not gated to the tag, so they run on pushes and pull
+    # requests too -- and `needs` here keeps a red build from shipping.
+    needs: [lint, test]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      # contents: write is for creating the release at the end of this job;
+      # everything before it only reads.
+      contents: write
       packages: write
     steps:
       - uses: actions/checkout@v5
@@ -75,19 +191,24 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # Derives the image tags from the release tag: `v1.4.0` publishes
-      # :1.4.0 and :1.4 (the `v` is stripped by {{version}}). `latest` moves
-      # only for a full release -- a GitHub pre-release still publishes its
-      # version tags, but must not become what `podman pull dynaform` gets,
-      # which is what dynaform.container resolves by default.
+      # Derives the image tags from the git tag, which metadata-action reads
+      # off the ref: `v1.4.0` publishes :1.4.0 and :1.4 (the `v` is stripped
+      # by {{version}}).
+      #
+      # latest=auto withholds :latest from a semver prerelease (v1.4.0-rc1
+      # publishes :1.4.0-rc1 and nothing else), which is what the old
+      # `enable: !github.event.release.prerelease` did off the release
+      # object. The signal moves from the pre-release checkbox to the tag
+      # name, and `podman pull dynaform` -- what dynaform.container resolves
+      # by default -- still never lands on a release candidate.
       - id: meta
         uses: docker/metadata-action@v6
         with:
           images: ghcr.io/${{ github.repository }}
+          flavor: latest=auto
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable=${{ !github.event.release.prerelease }}
       # Scanning has to happen between building and pushing, so the build is
       # split in two. This first one is amd64-only and `load: true`, which
       # puts the image in the runner's docker daemon where Trivy can read it
@@ -105,17 +226,10 @@ jobs:
           cache-from: type=gha,scope=dynaform
           cache-to: type=gha,scope=dynaform,mode=max
       # exit-code 1 is what makes this a gate rather than a report: a fixable
-      # finding at or above the severity below fails the job, and the push step
+      # finding at or above SCAN_SEVERITY fails the job, and the push step
       # never runs. ignore-unfixed keeps that gate honest -- the Debian base
       # carries CVEs with no patch available yet, and blocking every release on
       # those would only teach us to reach for the bypass.
-      #
-      # MEDIUM is included, which is wider than the Trivy docs' example, for a
-      # reason specific to this app: every sandbox escape Jinja2 has shipped a
-      # fix for (CVE-2024-56201, CVE-2024-56326, CVE-2025-27516) is rated
-      # MEDIUM by CVSS. DynaForm renders user-supplied templates and its whole
-      # security model is SandboxedEnvironment, so a CRITICAL/HIGH-only gate
-      # would wave through the one bug class that actually breaks this app.
       #
       # Only the amd64 image is scanned. Findings are per-package, and both
       # platforms install the same Debian and pip packages from the same
@@ -132,8 +246,8 @@ jobs:
           format: table
           exit-code: '1'
           ignore-unfixed: true
-          vuln-type: 'os,library'
-          severity: 'CRITICAL,HIGH,MEDIUM'
+          vuln-type: ${{ env.SCAN_VULN_TYPE }}
+          severity: ${{ env.SCAN_SEVERITY }}
       # linux/arm64 covers e.g. a 64-bit Raspberry Pi host; QEMU
       # (setup-qemu-action) emulates it since this runner is amd64.
       # cache-from/to: type=gha caches build layers in the Actions cache
@@ -151,3 +265,23 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=dynaform
           cache-to: type=gha,scope=dynaform,mode=max
+      # Last, so that the release means "this version built, scanned clean and
+      # was published" instead of being the thing that starts the attempt. A
+      # release drafted by hand in the web UI pushes its tag, which arrives
+      # here as an ordinary tag push -- hence the existence check, so that path
+      # publishes the image and leaves the hand-written notes alone.
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::notice::Release $TAG already exists -- leaving it as it is."
+            exit 0
+          fi
+          # A semver prerelease carries a hyphen (v1.4.0-rc1) and a full
+          # release never does: the same rule metadata-action applies above
+          # when it decides whether :latest moves.
+          flags=(--generate-notes --verify-tag)
+          case "$TAG" in *-*) flags+=(--prerelease) ;; esac
+          gh release create "$TAG" "${flags[@]}"
