@@ -112,9 +112,7 @@ that template is what gets parsed.
 
 Choosing a file fills the editor the same way a directory template does: the browser reads it
 with the File API and drops its text in, so you can read and edit it before going on to the form.
-The file is then detached from the form -- the editor holds everything that matters, and sending
-the original as well would mean your edits were parsed away, since an upload outranks the editor
-text on the server.
+The file is then detached from the form and not sent to the server.
 
 Two cases the page handles rather than reading the file:
 
@@ -124,8 +122,7 @@ Two cases the page handles rather than reading the file:
   anyway.
 
 Without JavaScript none of this happens and the original behaviour stands: the file is uploaded
-on submit and takes precedence over whatever is in the editor. The hint under the field says
-which of the two you are getting.
+on submit and takes precedence over whatever is in the editor
 
 ## Configuration
 
@@ -209,8 +206,7 @@ curl -fsSL -o ~/.config/containers/systemd/dynaform.container \
 ```
 
 Then set the signing key, which is the one thing you have to do by hand. `SECRET_KEY` signs the
-CSRF token on every form and DynaForm refuses to start without it — there is no default, because a
-key shipped in the image would be the same key on every install. Generate one:
+CSRF token on every form and DynaForm refuses to start without it. Generate one:
 
 ```bash
 openssl rand -base64 32
@@ -229,14 +225,13 @@ systemctl --user daemon-reload
 systemctl --user start dynaform
 ```
 
-Forget the key and the service won't come up; `journalctl --user -u dynaform` will have these same
-instructions waiting for you. The template directory needs nothing — Podman creates
-`~/dynaform-templates` if it isn't there, and an empty one just means the picker has nothing to
+The service won't come up without the `SECRET_KEY`. `journalctl --user -u dynaform` will have these same
+instructions. The template directory needs nothing, an empty directory just means the picker has nothing to
 list.
 
-For a system-wide service, copy to `/etc/containers/systemd/` instead and drop `--user` from the
+For a system-wide service, copy the unit to `/etc/containers/systemd/` instead and drop `--user` from the
 `systemctl` commands. Note that `%h` in the `Volume=` line then resolves to root's home rather
-than yours, and that the unit holds your key — so keep it readable only by root (`chmod 600`).
+than yours, and that the unit holds your key, so keep it readable only by root (`chmod 600`).
 
 #### Pinning a version
 
@@ -253,11 +248,10 @@ listed under [Cutting a release](#cutting-a-release).
 
 #### Keeping the key out of the unit file
 
-A key in the unit is fine for a host you are the only user of, which is what most people running
-this have. It is worth knowing where it ends up, though: Quadlet turns `Environment=` into an
-`--env` argument on the generated `podman run` command line, so it is visible to anyone who can
-read the unit, run `systemctl --user cat dynaform`, or catch the process in `ps`, and it travels
-with the file into backups.
+A key in the unit is fine for a host you are the only user of. It is worth knowing where it ends 
+up, though: Quadlet turns `Environment=` into an `--env` argument on the generated `podman run` 
+command line, so it is visible to anyone who can read the unit, run `systemctl --user cat dynaform`, 
+or catch the process in `ps`, and it travels with the file into backups.
 
 To hand it to Podman instead, create the secret first:
 
@@ -265,8 +259,7 @@ To hand it to Podman instead, create the secret first:
 openssl rand -base64 32 | podman secret create dynaform-secret-key -
 ```
 
-then **delete** the `Environment=SECRET_KEY=` line — don't just leave it empty, or the variable
-has two sources and you get to find out which one wins — and add this under `[Container]`:
+then delete or comment out the `Environment=SECRET_KEY=` line, and add this under `[Container]`:
 
 ```ini
 Secret=dynaform-secret-key,type=env,target=SECRET_KEY
@@ -377,7 +370,7 @@ Note what that second choice does *not* cover. The findings that actually fail t
 *fixable* ones, and most of them come from the base image rather than from anything in this
 repository: `python:3.12-slim` is rebuilt on its own schedule, so between rebuilds its packages
 fall behind Debian's security archive while patched versions sit in the archive unused. That is
-why the `Containerfile` applies `apt-get upgrade` and upgrades `pip` — without it, a scan of an
+why the `Containerfile` applies `apt-get upgrade` and upgrades `pip`. Without it, a scan of an
 otherwise untouched base image fails on tens of CVEs that have nothing to do with the change being
 reviewed. Expect it to recur: each time Debian publishes updates ahead of a base-image rebuild,
 the next build picks them up, and the weekly scan is what tells you an already-published image has
@@ -417,9 +410,6 @@ plan.md                 implementation plan and rationale
 
 ## Contributing
 
-The design note (`dynaform.md`) and the implementation plan (`plan.md`) explain why things are
-the way they are. Read them before changing the parser or the syntax.
-
 A few conventions the existing code follows:
 
 - Both parsing and rendering of user-supplied templates go through Jinja2's
@@ -430,8 +420,7 @@ A few conventions the existing code follows:
   prevents reflected XSS. It is deliberately a different environment from the sandboxed one.
 - Never log submitted field values; a `P_` field is a password by definition.
 - No persistence: no database, no session storage of template content, no writing user content to
-  disk. `TEMPLATE_DIR` is read-only -- edits to a chosen template belong to the request that
-  carries them, never to the file.
+  disk. `TEMPLATE_DIR` is read-only. Edits to a chosen template are never written to the file.
 - Nothing from a request is ever joined onto a filesystem path. `read_template()` matches the
   submitted name against the directory scan instead, so traversal has nothing to traverse.
 - Modules carry type hints and `from __future__ import annotations`.
