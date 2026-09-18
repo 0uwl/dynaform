@@ -26,10 +26,16 @@ jobs:
       - run: pip install ruff==0.16.7
       - name: Ruff (Python)
         run: ruff check .
+      # image-tag is the load-bearing pin here, not the `@` ref: the action is
+      # a thin wrapper that runs `ghcr.io/immanuwell/droast:${image-tag}`, and
+      # that input defaults to `latest`. Left unset, the Containerfile linter
+      # floats even though the action looks pinned -- which is the exact drift
+      # the ruff pin above exists to prevent.
       - name: Containerfile linting
-        uses: immanuwell/dockerfile-roast@1.4.4
+        uses: immanuwell/dockerfile-roast@1.7.0
         with:
           files: 'Containerfile'
+          image-tag: '1.7.0'
           engine: podman
           preset: production
 
