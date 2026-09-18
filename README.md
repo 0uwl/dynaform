@@ -316,6 +316,16 @@ Two deliberate choices there:
   available; failing every release on those teaches people to bypass the gate rather than fix
   anything.
 
+Note what that second choice does *not* cover. The findings that actually fail this gate are the
+*fixable* ones, and most of them come from the base image rather than from anything in this
+repository: `python:3.12-slim` is rebuilt on its own schedule, so between rebuilds its packages
+fall behind Debian's security archive while patched versions sit in the archive unused. That is
+why the `Containerfile` applies `apt-get upgrade` and upgrades `pip` — without it, a scan of an
+otherwise untouched base image fails on tens of CVEs that have nothing to do with the change being
+reviewed. Expect it to recur: each time Debian publishes updates ahead of a base-image rebuild,
+the next build picks them up, and the weekly scan is what tells you an already-published image has
+fallen behind.
+
 The weekly run scans the *published* `:latest` image rather than a fresh build. That is the one
 thing a build-time gate cannot do: catch a CVE disclosed after the image shipped, when nothing in
 the repository has changed but the image on your host is newly vulnerable. It can also be run on
