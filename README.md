@@ -270,6 +270,72 @@ The suite has no external dependencies and needs no running server:
 
 `tests/conftest.py` sets a test `SECRET_KEY` and disables CSRF for the test client.
 
+## Continuous integration
+
+`.github/workflows/cicd.yml` is the whole pipeline. What runs depends on the event:
+
+| Event                    | Lint | Test | Scan image | Scan published image | Publish |
+|--------------------------|:----:|:----:|:----------:|:--------------------:|:-------:|
+| Pull request to `main`   |  ✓   |  ✓   |     ✓      |                      |         |
+| Push to `main`           |  ✓   |  ✓   |     ✓      |                      |         |
+| Push of a `v*` tag       |  ✓   |  ✓   |            |                      |    ✓    |
+| Weekly schedule / manual |      |      |            |          ✓           |         |
+
+### Cutting a release
+
+Push a tag, and the pipeline does the rest:
+
+```bash
+git tag -a v1.4.0 -m "Release 1.4.0"
+git push origin v1.4.0
+```
+
+That builds the image, scans it, pushes it to `ghcr.io/<owner>/dynaform`, and *then* creates the
+GitHub release — in that order, so a release existing means the image behind it passed. `v1.4.0`
+publishes `:1.4.0`, `:1.4` and `:latest`; a prerelease tag (`v1.4.0-rc1`, anything with a hyphen)
+publishes only `:1.4.0-rc1`, is marked as a pre-release, and never moves `:latest` — which matters
+because `:latest` is what `dynaform.container` resolves by default.
+
+Drafting a release in the GitHub web UI also works: that pushes the tag, which triggers the same
+run. The workflow notices the release already exists and leaves your notes alone.
+
+### Vulnerability scanning
+
+Every image is scanned with [Trivy](https://github.com/aquasecurity/trivy) before it can be
+published, and a failing scan stops the push. The policy lives in one place — the `SCAN_SEVERITY`
+and `SCAN_VULN_TYPE` variables at the top of the workflow — so the pull-request gate cannot drift
+from the release gate.
+
+Two deliberate choices there:
+
+- **`MEDIUM` is included**, which is wider than Trivy's own example. Every Jinja2 sandbox escape
+  that has a fix (CVE-2024-56201, CVE-2024-56326, CVE-2025-27516) is rated MEDIUM by CVSS, and
+  this app's security model *is* the sandbox. A CRITICAL/HIGH-only gate would wave through the one
+  bug class that actually breaks DynaForm.
+- **Unfixed vulnerabilities are ignored.** A Debian base always carries CVEs with no patch
+  available; failing every release on those teaches people to bypass the gate rather than fix
+  anything.
+
+Note what that second choice does *not* cover. The findings that actually fail this gate are the
+*fixable* ones, and most of them come from the base image rather than from anything in this
+repository: `python:3.12-slim` is rebuilt on its own schedule, so between rebuilds its packages
+fall behind Debian's security archive while patched versions sit in the archive unused. That is
+why the `Containerfile` applies `apt-get upgrade` and upgrades `pip` — without it, a scan of an
+otherwise untouched base image fails on tens of CVEs that have nothing to do with the change being
+reviewed. Expect it to recur: each time Debian publishes updates ahead of a base-image rebuild,
+the next build picks them up, and the weekly scan is what tells you an already-published image has
+fallen behind.
+
+The weekly run scans the *published* `:latest` image rather than a fresh build. That is the one
+thing a build-time gate cannot do: catch a CVE disclosed after the image shipped, when nothing in
+the repository has changed but the image on your host is newly vulnerable. It can also be run on
+demand from the Actions tab.
+
+Because the scan is a gate on pull requests too, a CVE disclosed against the base image overnight
+can fail a pull request that had nothing to do with it. That is the intended trade — finding out
+on a pull request beats finding out mid-release — and the fix is usually to rebuild on a fresher
+base rather than to change anything in the diff.
+
 ## Project layout
 
 ```
@@ -284,6 +350,8 @@ app/
   static/js/            conditional-field toggle, editor sources, output copy/download
   static/vendor/        vendored Bootstrap 5
 tests/
+.github/workflows/
+  cicd.yml              lint, test, scan, publish
 Containerfile
 dynaform.container      Quadlet unit
 dynaform.md             original design note
