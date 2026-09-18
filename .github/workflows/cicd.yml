@@ -88,11 +88,60 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable=${{ !github.event.release.prerelease }}
+      # Scanning has to happen between building and pushing, so the build is
+      # split in two. This first one is amd64-only and `load: true`, which
+      # puts the image in the runner's docker daemon where Trivy can read it
+      # -- a daemon cannot hold a multi-platform image, so loading and
+      # multi-arch are mutually exclusive. It writes the same gha cache the
+      # publishing build reads, so the amd64 layers are built once, not twice.
+      - name: Build image for scanning
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Containerfile
+          platforms: linux/amd64
+          load: true
+          tags: dynaform:${{ github.sha }}
+          cache-from: type=gha,scope=dynaform
+          cache-to: type=gha,scope=dynaform,mode=max
+      # exit-code 1 is what makes this a gate rather than a report: a fixable
+      # finding at or above the severity below fails the job, and the push step
+      # never runs. ignore-unfixed keeps that gate honest -- the Debian base
+      # carries CVEs with no patch available yet, and blocking every release on
+      # those would only teach us to reach for the bypass.
+      #
+      # MEDIUM is included, which is wider than the Trivy docs' example, for a
+      # reason specific to this app: every sandbox escape Jinja2 has shipped a
+      # fix for (CVE-2024-56201, CVE-2024-56326, CVE-2025-27516) is rated
+      # MEDIUM by CVSS. DynaForm renders user-supplied templates and its whole
+      # security model is SandboxedEnvironment, so a CRITICAL/HIGH-only gate
+      # would wave through the one bug class that actually breaks this app.
+      #
+      # Only the amd64 image is scanned. Findings are per-package, and both
+      # platforms install the same Debian and pip packages from the same
+      # Containerfile, so scanning arm64 as well would report the same list.
+      #
+      # Pinning the action pins the trivy binary, but the vulnerability
+      # database is fetched at run time -- so re-running a release that passed
+      # last month can fail today. That is the point of a security gate, not
+      # drift of the kind the pins elsewhere in this file guard against.
+      - name: Scan image for CVEs
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: dynaform:${{ github.sha }}
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH,MEDIUM'
       # linux/arm64 covers e.g. a 64-bit Raspberry Pi host; QEMU
       # (setup-qemu-action) emulates it since this runner is amd64.
       # cache-from/to: type=gha caches build layers in the Actions cache
-      # and reuses whatever's still valid on the next run.
-      - uses: docker/build-push-action@v7
+      # and reuses whatever's still valid on the next run -- including the
+      # amd64 layers the scanned build just wrote, so this step only has
+      # arm64 left to build.
+      - name: Build and publish image
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Containerfile
