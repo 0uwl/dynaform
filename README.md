@@ -112,9 +112,7 @@ that template is what gets parsed.
 
 Choosing a file fills the editor the same way a directory template does: the browser reads it
 with the File API and drops its text in, so you can read and edit it before going on to the form.
-The file is then detached from the form -- the editor holds everything that matters, and sending
-the original as well would mean your edits were parsed away, since an upload outranks the editor
-text on the server.
+The file is then detached from the form and not sent to the server.
 
 Two cases the page handles rather than reading the file:
 
@@ -124,8 +122,7 @@ Two cases the page handles rather than reading the file:
   anyway.
 
 Without JavaScript none of this happens and the original behaviour stands: the file is uploaded
-on submit and takes precedence over whatever is in the editor. The hint under the field says
-which of the two you are getting.
+on submit and takes precedence over whatever is in the editor
 
 ## Configuration
 
@@ -133,7 +130,7 @@ All configuration is by environment variable.
 
 | Variable             | Default    | Purpose                                                      |
 |----------------------|------------|--------------------------------------------------------------|
-| `SECRET_KEY`         | *(none)*   | Required. Signs CSRF tokens. The app refuses to start without it unless running in debug or test mode. |
+| `SECRET_KEY`         | *(none)*   | Required. Signs CSRF tokens. The app refuses to start without it (and logs how to set one) unless running in debug or test mode. |
 | `MAX_CONTENT_LENGTH` | `262144`   | Max request body in bytes (256 KB).                          |
 | `TEMPLATE_DIR`       | *(empty)*  | Directory of ready-made templates to list in the picker. Empty turns the picker off. The container image sets it to `/templates`. |
 | `TEMPLATE_MAX_BYTES` | `65536`    | Files in `TEMPLATE_DIR` larger than this are not listed (64 KB). |
@@ -200,32 +197,77 @@ fill the template picker (see [Template directory](#template-directory)).
 `dynaform.container` is a [Quadlet](https://docs.podman.io/en/latest/markdown/podman-systemd.unit.5.html)
 unit: systemd generates the service from it, so there's no `.service` file to write.
 
-It mounts `~/dynaform-templates` at `/templates` for the template picker, so create that
-directory (or change the `Volume=` line, or delete it if you don't want the picker):
-
-```bash
-mkdir -p ~/dynaform-templates
-```
-
-It reads `SECRET_KEY` from a Podman secret rather than a plain environment line, so create the
-secret next:
-
-```bash
-python -c 'import secrets; print(secrets.token_hex(32))' \
-  | podman secret create dynaform-secret-key -
-```
-
-Then install the unit. Rootless (recommended):
+It points at the published image, so there is nothing to build. Rootless (recommended):
 
 ```bash
 mkdir -p ~/.config/containers/systemd
-cp dynaform.container ~/.config/containers/systemd/
+curl -fsSL -o ~/.config/containers/systemd/dynaform.container \
+  https://raw.githubusercontent.com/0uwl/dynaform/main/dynaform.container
+```
+
+Then set the signing key, which is the one thing you have to do by hand. `SECRET_KEY` signs the
+CSRF token on every form and DynaForm refuses to start without it. Generate one:
+
+```bash
+openssl rand -base64 32
+```
+
+and paste it into the unit's empty `SECRET_KEY` line:
+
+```ini
+Environment=SECRET_KEY=<the generated key>
+```
+
+Now start it:
+
+```bash
 systemctl --user daemon-reload
 systemctl --user start dynaform
 ```
 
-For a system-wide service, copy to `/etc/containers/systemd/` instead and drop `--user` from the
-`systemctl` commands (the secret then has to be created as root too).
+The service won't come up without the `SECRET_KEY`. `journalctl --user -u dynaform` will have these same
+instructions. The template directory needs nothing, an empty directory just means the picker has nothing to
+list.
+
+For a system-wide service, copy the unit to `/etc/containers/systemd/` instead and drop `--user` from the
+`systemctl` commands. Note that `%h` in the `Volume=` line then resolves to root's home rather
+than yours, and that the unit holds your key, so keep it readable only by root (`chmod 600`).
+
+#### Pinning a version
+
+`Image=` tracks `ghcr.io/0uwl/dynaform:latest`, which moves to each new full release (a
+pre-release never moves it). A `systemctl --user restart` after a `podman pull` therefore picks up
+whatever shipped since. To decide when that happens, replace the tag with the version you want:
+
+```ini
+Image=ghcr.io/0uwl/dynaform:1.4.0
+```
+
+`:1.4` works too, and follows patch releases within that minor. The tags a release publishes are
+listed under [Cutting a release](#cutting-a-release).
+
+#### Keeping the key out of the unit file
+
+A key in the unit is fine for a host you are the only user of. It is worth knowing where it ends 
+up, though: Quadlet turns `Environment=` into an `--env` argument on the generated `podman run` 
+command line, so it is visible to anyone who can read the unit, run `systemctl --user cat dynaform`, 
+or catch the process in `ps`, and it travels with the file into backups.
+
+To hand it to Podman instead, create the secret first:
+
+```bash
+openssl rand -base64 32 | podman secret create dynaform-secret-key -
+```
+
+then delete or comment out the `Environment=SECRET_KEY=` line, and add this under `[Container]`:
+
+```ini
+Secret=dynaform-secret-key,type=env,target=SECRET_KEY
+```
+
+Secrets belong to the user who created them, so a system-wide service needs its own. Either way
+the value is an environment variable inside the container, so anyone who can `podman exec` into
+DynaForm can read it.
 
 Check on it:
 
@@ -244,8 +286,16 @@ rootless service that should survive logout, enable lingering:
 loginctl enable-linger "$USER"
 ```
 
-The unit expects `localhost/dynaform:latest` to exist locally, so rebuild the image before
-restarting the service after a code change:
+#### Running your own build instead
+
+Point `Image=` at the image `podman build` leaves in local storage, and Podman stops reaching for
+the registry:
+
+```ini
+Image=localhost/dynaform:latest
+```
+
+Then rebuild before restarting after a code change:
 
 ```bash
 podman build -t dynaform:latest .
@@ -320,7 +370,7 @@ Note what that second choice does *not* cover. The findings that actually fail t
 *fixable* ones, and most of them come from the base image rather than from anything in this
 repository: `python:3.12-slim` is rebuilt on its own schedule, so between rebuilds its packages
 fall behind Debian's security archive while patched versions sit in the archive unused. That is
-why the `Containerfile` applies `apt-get upgrade` and upgrades `pip` — without it, a scan of an
+why the `Containerfile` applies `apt-get upgrade` and upgrades `pip`. Without it, a scan of an
 otherwise untouched base image fails on tens of CVEs that have nothing to do with the change being
 reviewed. Expect it to recur: each time Debian publishes updates ahead of a base-image rebuild,
 the next build picks them up, and the weekly scan is what tells you an already-published image has
@@ -360,9 +410,6 @@ plan.md                 implementation plan and rationale
 
 ## Contributing
 
-The design note (`dynaform.md`) and the implementation plan (`plan.md`) explain why things are
-the way they are. Read them before changing the parser or the syntax.
-
 A few conventions the existing code follows:
 
 - Both parsing and rendering of user-supplied templates go through Jinja2's
@@ -373,8 +420,7 @@ A few conventions the existing code follows:
   prevents reflected XSS. It is deliberately a different environment from the sandboxed one.
 - Never log submitted field values; a `P_` field is a password by definition.
 - No persistence: no database, no session storage of template content, no writing user content to
-  disk. `TEMPLATE_DIR` is read-only -- edits to a chosen template belong to the request that
-  carries them, never to the file.
+  disk. `TEMPLATE_DIR` is read-only. Edits to a chosen template are never written to the file.
 - Nothing from a request is ever joined onto a filesystem path. `read_template()` matches the
   submitted name against the directory scan instead, so traversal has nothing to traverse.
 - Modules carry type hints and `from __future__ import annotations`.
