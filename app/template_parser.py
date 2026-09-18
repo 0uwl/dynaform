@@ -8,7 +8,8 @@ password / number / checkbox / radio). Radio variables are further named
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field as dc_field
+from dataclasses import dataclass
+from dataclasses import field as dc_field
 
 from jinja2 import TemplateSyntaxError
 from jinja2.meta import find_undeclared_variables

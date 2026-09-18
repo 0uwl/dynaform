@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  release:
+    types: [published]
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      # Pinned, for the same reason requirements.txt is pinned: an unpinned
+      # linter changes what it enforces without a commit, so it can fail CI on
+      # an unchanged codebase. ruff 0.16 widened its DEFAULT rule set (isort,
+      # part of pylint) over 0.15, which is exactly that failure mode. Bumping
+      # this is a deliberate change with its own diff.
+      - run: pip install ruff==0.16.7
+      - name: Ruff (Python)
+        run: ruff check .
+      # image-tag is the load-bearing pin here, not the `@` ref: the action is
+      # a thin wrapper that runs `ghcr.io/immanuwell/droast:${image-tag}`, and
+      # that input defaults to `latest`. Left unset, the Containerfile linter
+      # floats even though the action looks pinned -- which is the exact drift
+      # the ruff pin above exists to prevent.
+      - name: Containerfile linting
+        uses: immanuwell/dockerfile-roast@1.7.0
+        with:
+          files: 'Containerfile'
+          image-tag: '1.7.0'
+          engine: podman
+          preset: production
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      # requirements-dev.txt pulls in requirements.txt and adds pytest, so this
+      # is the one install the test job needs.
+      - run: pip install -r requirements-dev.txt
+      - name: Pytest
+        run: pytest -v
+
+  publish:
+    name: Publish container
+    # Publishing on a release rather than on every push to main means the
+    # published image always corresponds to a tag someone chose to cut. lint
+    # and test are not gated to the release event, so they run on pushes and
+    # pull requests too -- and `needs` here keeps a red build from shipping.
+    needs: [lint, test]
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # Derives the image tags from the release tag: `v1.4.0` publishes
+      # :1.4.0 and :1.4 (the `v` is stripped by {{version}}). `latest` moves
+      # only for a full release -- a GitHub pre-release still publishes its
+      # version tags, but must not become what `podman pull dynaform` gets,
+      # which is what dynaform.container resolves by default.
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ !github.event.release.prerelease }}
+      # linux/arm64 covers e.g. a 64-bit Raspberry Pi host; QEMU
+      # (setup-qemu-action) emulates it since this runner is amd64.
+      # cache-from/to: type=gha caches build layers in the Actions cache
+      # and reuses whatever's still valid on the next run.
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Containerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=dynaform
+          cache-to: type=gha,scope=dynaform,mode=max
