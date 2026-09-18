@@ -31,7 +31,7 @@ class UploadForm(FlaskForm):
     template_choice = SelectField("Choose a template", validators=[Optional()])
     template_text = TextAreaField("Template text", validators=[Optional()])
     template_file = FileField(
-        "...or upload a .j2 file",
+        "Upload a file",
         validators=[Optional(), FileAllowed(["j2", "txt"], "Template files only (.j2, .txt).")],
     )
     load = SubmitField("Load into editor")

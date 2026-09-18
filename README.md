@@ -8,6 +8,10 @@ DynaForm reads the undeclared variables out of the template, builds a Bootstrap 
 input per variable, and renders the filled-in result. The input type of each field comes from a
 prefix on the variable name, so the template itself is the only thing you have to write.
 
+A file you pick is read in the browser and shown in the editor, so you can look it over and
+change it before the form is built -- with scripting enabled the file itself never leaves your
+machine.
+
 From the result page you can copy the rendered output to your clipboard or save it as a `.txt`
 file. Both options run in the browser against the text already on the page, so the output never travels
 back to the server.
@@ -74,11 +78,9 @@ podman run --rm -p 8000:8000 \
   localhost/dynaform:latest
 ```
 
-The first page then offers, in this order:
-
-1. **Choose a template** — the directory listing.
-2. **Template text** — the editor, where a chosen template's text lands.
-3. **Upload a `.j2` file** — as before.
+The first page then offers two sources side by side -- **Choose a template**, the directory
+listing, and **Upload a file** -- above the **Template text** editor that both of them fill.
+Whatever is in that editor when you press **Parse template** is what gets parsed.
 
 Choosing a template copies its text into the editor so you can read it and change it before
 going on to the form. Those edits live in that browser page and in the request that follows it:
@@ -105,6 +107,25 @@ Without JavaScript, pick a template and press **Load into editor**; the page com
 text in place. With JavaScript, the button is hidden and the text loads as soon as you pick.
 Either way, if you press **Parse template** with an empty editor while a template is selected,
 that template is what gets parsed.
+
+## Uploading a file
+
+Choosing a file fills the editor the same way a directory template does: the browser reads it
+with the File API and drops its text in, so you can read and edit it before going on to the form.
+The file is then detached from the form -- the editor holds everything that matters, and sending
+the original as well would mean your edits were parsed away, since an upload outranks the editor
+text on the server.
+
+Two cases the page handles rather than reading the file:
+
+- A file that isn't `.j2` or `.txt` stays attached and is left to the server, so submitting gives
+  the usual "Template files only" error instead of a file that was quietly ignored.
+- A file over `MAX_CONTENT_LENGTH` is dropped with a note, because it could not be submitted
+  anyway.
+
+Without JavaScript none of this happens and the original behaviour stands: the file is uploaded
+on submit and takes precedence over whatever is in the editor. The hint under the field says
+which of the two you are getting.
 
 ## Configuration
 
@@ -260,7 +281,7 @@ app/
   template_parser.py    parsing, validation, grouping
   template_library.py   read-only scan of TEMPLATE_DIR
   templates/            base, index, form, result
-  static/js/            conditional-field toggle, template picker, output copy/download
+  static/js/            conditional-field toggle, editor sources, output copy/download
   static/vendor/        vendored Bootstrap 5
 tests/
 Containerfile

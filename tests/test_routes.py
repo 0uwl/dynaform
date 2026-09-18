@@ -248,13 +248,15 @@ class TestTemplateLibrary:
         html = client.get("/").data.decode()
         assert 'name="template_choice"' not in html
 
-    def test_picker_comes_before_the_editor_and_the_upload_field(self, client, library):
+    def test_sources_come_before_the_editor_they_fill(self, client, library):
+        # Both sources sit side by side at the top; the editor they fill is
+        # last, right above the submit button.
         (library / "greeting.j2").write_text(TEMPLATE)
         html = client.get("/").data.decode()
         assert (
             html.index('name="template_choice"')
-            < html.index('name="template_text"')
             < html.index('name="template_file"')
+            < html.index('name="template_text"')
         )
 
     def test_load_button_fills_the_editor_without_js(self, client, library):
@@ -362,9 +364,59 @@ class TestTemplateLibrary:
 
     def test_index_loads_the_picker_script(self, client, library):
         (library / "greeting.j2").write_text(TEMPLATE)
-        assert b"js/template_library.js" in client.get("/").data
+        assert b"js/template_sources.js" in client.get("/").data
 
     def test_load_button_ships_visible_for_no_js_use(self, client, library):
         (library / "greeting.j2").write_text(TEMPLATE)
         html = client.get("/").data.decode()
         assert re.search(r'id="load-template"(?![^>]*\bhidden\b)', html)
+
+
+class TestUploadPreview:
+    def test_editor_script_loads_without_a_template_directory(self, client):
+        # The file preview is independent of the picker, so the script has to
+        # be there even when no directory is configured.
+        assert b"js/template_sources.js" in client.get("/").data
+
+    def test_file_input_announces_what_it_accepts(self, client):
+        # WTForms renders attributes in alphabetical order, so match the whole
+        # tag rather than assuming accept follows name.
+        html = client.get("/").data.decode()
+        tag = re.search(r'<input[^>]*name="template_file"[^>]*>', html).group(0)
+        assert 'accept=".j2,.txt"' in tag
+
+    def test_file_input_carries_the_request_size_limit(self, app, client):
+        html = client.get("/").data.decode()
+        assert f'data-max-bytes="{app.config["MAX_CONTENT_LENGTH"]}"' in html
+
+    def test_hint_and_status_targets_are_present(self, client):
+        html = client.get("/").data.decode()
+        assert 'id="template-file-hint"' in html
+        assert 'id="template-file-status"' in html
+
+    def test_page_describes_the_no_js_behaviour_by_default(self, client):
+        # The served hint is the truth without scripting: the file is uploaded
+        # and wins over the editor. The script rewrites it in the browser.
+        html = client.get("/").data.decode()
+        assert "An uploaded file takes precedence over the editor text." in html
+
+    def test_uploading_still_works_without_js(self, client):
+        # Unchanged server path: no script, so the file really is uploaded.
+        data = {
+            "template_file": (io.BytesIO(TEMPLATE.encode()), "greeting.j2"),
+            "submit": "Parse template",
+        }
+        resp = client.post("/", data=data, content_type="multipart/form-data")
+        assert resp.status_code == 200
+        assert b'name="S_username"' in resp.data
+
+    def test_uploaded_file_still_beats_editor_text_without_js(self, client):
+        data = {
+            "template_file": (io.BytesIO(TEMPLATE.encode()), "greeting.j2"),
+            "template_text": "Edited {{ S_edited }}",
+            "submit": "Parse template",
+        }
+        resp = client.post("/", data=data, content_type="multipart/form-data")
+        html = resp.data.decode()
+        assert 'name="S_username"' in html
+        assert 'name="S_edited"' not in html
