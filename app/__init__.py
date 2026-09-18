@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 
 from flask import Flask
 
@@ -25,6 +26,17 @@ def create_app() -> Flask:
     if gunicorn_logger.handlers:
         app.logger.handlers = gunicorn_logger.handlers
         app.logger.setLevel(gunicorn_logger.level)
+
+    template_dir = app.config["TEMPLATE_DIR"]
+    if not template_dir:
+        app.logger.info("TEMPLATE_DIR unset: the template picker is off")
+    elif os.path.isdir(template_dir):
+        app.logger.info("Serving directory templates from %s", template_dir)
+    else:
+        app.logger.warning(
+            "TEMPLATE_DIR %s is not a directory: the template picker stays empty",
+            template_dir,
+        )
 
     from .routes import bp
 

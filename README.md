@@ -3,17 +3,18 @@
 A small Flask web app that turns a Jinja2 template into an HTML form, then renders the
 template with whatever you type in.
 
-Give it a `.j2` file (or paste the text), and DynaForm reads the undeclared variables out of
-the template, builds a Bootstrap form with one input per variable, and renders the filled-in
-result. The input type of each field comes from a prefix on the variable name, so the template
-itself is the only thing you have to write.
+Give it a `.j2` file (or paste the text, or pick one from a directory you mounted), and
+DynaForm reads the undeclared variables out of the template, builds a Bootstrap form with one
+input per variable, and renders the filled-in result. The input type of each field comes from a
+prefix on the variable name, so the template itself is the only thing you have to write.
 
 From the result page you can copy the rendered output to your clipboard or save it as a `.txt`
 file. Both options run in the browser against the text already on the page, so the output never travels
 back to the server.
 
 Nothing is stored. There is no database, no session store, and no user content written to disk.
-The template source is carried between the two requests in a hidden form field.
+The template source is carried between the two requests in a hidden form field. The template
+directory is only ever read from.
 
 ## Template syntax
 
@@ -60,6 +61,51 @@ Admin: {{ S_admin_name }} / {{ P_admin_pass }}
 
 Ticking **Admin** unfolds the "Admin name" and "Admin pass" inputs.
 
+## Template directory
+
+Point `TEMPLATE_DIR` at a directory of ready-made templates and DynaForm lists them in a picker
+at the top of the first page. The container image sets `TEMPLATE_DIR=/templates` already, so all
+you have to do is bind-mount a host directory there:
+
+```bash
+podman run --rm -p 8000:8000 \
+  -v ~/dynaform-templates:/templates:ro,Z \
+  -e SECRET_KEY="$(python -c 'import secrets; print(secrets.token_hex(32))')" \
+  localhost/dynaform:latest
+```
+
+The first page then offers, in this order:
+
+1. **Choose a template** — the directory listing.
+2. **Template text** — the editor, where a chosen template's text lands.
+3. **Upload a `.j2` file** — as before.
+
+Choosing a template copies its text into the editor so you can read it and change it before
+going on to the form. Those edits live in that browser page and in the request that follows it:
+**the file on disk is never written to**, and the next visitor gets the original again. Mounting
+the directory read-only (`:ro` above) makes that a property of the container, not just of the
+code.
+
+What gets listed:
+
+- Files ending in `.j2` or `.txt`, including ones in subdirectories — a subdirectory shows up as
+  part of the name (`linux/sshd.j2`).
+- Not files or directories whose name starts with `.`, so a stray `.git` directory stays out of
+  the list.
+- Not files bigger than `TEMPLATE_MAX_BYTES` (64 KB by default), because a chosen template
+  travels back to the server in the editor on the next request.
+- A symlink is followed only if it lands inside the directory; one pointing at `/etc/passwd` is
+  ignored, and a symlinked subdirectory is not descended into.
+
+The directory is scanned per request, so a template you drop into it shows up on the next page
+load without restarting anything. Leaving `TEMPLATE_DIR` unset (the default outside the
+container) turns the whole picker off, and so does an empty directory.
+
+Without JavaScript, pick a template and press **Load into editor**; the page comes back with the
+text in place. With JavaScript, the button is hidden and the text loads as soon as you pick.
+Either way, if you press **Parse template** with an empty editor while a template is selected,
+that template is what gets parsed.
+
 ## Configuration
 
 All configuration is by environment variable.
@@ -68,12 +114,14 @@ All configuration is by environment variable.
 |----------------------|------------|--------------------------------------------------------------|
 | `SECRET_KEY`         | *(none)*   | Required. Signs CSRF tokens. The app refuses to start without it unless running in debug or test mode. |
 | `MAX_CONTENT_LENGTH` | `262144`   | Max request body in bytes (256 KB).                          |
+| `TEMPLATE_DIR`       | *(empty)*  | Directory of ready-made templates to list in the picker. Empty turns the picker off. The container image sets it to `/templates`. |
+| `TEMPLATE_MAX_BYTES` | `65536`    | Files in `TEMPLATE_DIR` larger than this are not listed (64 KB). |
 | `BIND_HOST`          | `0.0.0.0`  | Gunicorn bind address (container only).                      |
 | `BIND_PORT`          | `8000`     | Gunicorn bind port (container only).                         |
 | `GUNICORN_WORKERS`   | `2`        | Number of gunicorn workers (container only).                 |
 
-Logs go to stdout only. Template accepted/rejected, validation failures, and render outcomes are
-logged but never the submitted values.
+Logs go to stdout only. Template accepted/rejected, validation failures, render outcomes, and
+the name of a template loaded from the directory are logged -- but never the submitted values.
 
 ## Running it locally
 
@@ -123,15 +171,23 @@ podman run --rm -p 8000:8000 \
 ```
 
 The app is then on <http://localhost:8000>. Add `-e GUNICORN_WORKERS=4` or `-e BIND_PORT=9000`
-(with a matching `-p`) to change the defaults.
+(with a matching `-p`) to change the defaults, and `-v ~/dynaform-templates:/templates:ro,Z` to
+fill the template picker (see [Template directory](#template-directory)).
 
 ### With the Quadlet unit
 
 `dynaform.container` is a [Quadlet](https://docs.podman.io/en/latest/markdown/podman-systemd.unit.5.html)
 unit: systemd generates the service from it, so there's no `.service` file to write.
 
+It mounts `~/dynaform-templates` at `/templates` for the template picker, so create that
+directory (or change the `Volume=` line, or delete it if you don't want the picker):
+
+```bash
+mkdir -p ~/dynaform-templates
+```
+
 It reads `SECRET_KEY` from a Podman secret rather than a plain environment line, so create the
-secret first:
+secret next:
 
 ```bash
 python -c 'import secrets; print(secrets.token_hex(32))' \
@@ -186,6 +242,8 @@ The suite has no external dependencies and needs no running server:
 
 - `tests/test_template_parser.py` — variable extraction, prefix validation, source ordering,
   radio grouping, conditional-parent detection.
+- `tests/test_template_library.py` — scanning the template directory: extensions, subdirectories,
+  hidden files, the size cap, and symlinks aimed outside it.
 - `tests/test_forms.py` — dynamic WTForms construction: field classes, labels, validators.
 - `tests/test_routes.py` — the full HTTP path: parse → dynamic form → render.
 
@@ -197,11 +255,12 @@ The suite has no external dependencies and needs no running server:
 app/
   __init__.py           application factory, logging hookup
   config.py             environment-driven config
-  routes.py             GET / , POST / (parse), POST /render
-  forms.py              upload form + dynamic form builder
+  routes.py             GET / , POST / (parse or load), GET /template-library, POST /render
+  forms.py              upload/picker form + dynamic form builder
   template_parser.py    parsing, validation, grouping
+  template_library.py   read-only scan of TEMPLATE_DIR
   templates/            base, index, form, result
-  static/js/            conditional-field toggle, output copy/download
+  static/js/            conditional-field toggle, template picker, output copy/download
   static/vendor/        vendored Bootstrap 5
 tests/
 Containerfile
@@ -225,7 +284,10 @@ A few conventions the existing code follows:
   prevents reflected XSS. It is deliberately a different environment from the sandboxed one.
 - Never log submitted field values; a `P_` field is a password by definition.
 - No persistence: no database, no session storage of template content, no writing user content to
-  disk.
+  disk. `TEMPLATE_DIR` is read-only -- edits to a chosen template belong to the request that
+  carries them, never to the file.
+- Nothing from a request is ever joined onto a filesystem path. `read_template()` matches the
+  submitted name against the directory scan instead, so traversal has nothing to traverse.
 - Modules carry type hints and `from __future__ import annotations`.
 
 To contribute:

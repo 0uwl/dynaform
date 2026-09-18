@@ -47,7 +47,7 @@ class TestParse:
     def test_empty_submission_rejected(self, client):
         resp = client.post("/", data={"submit": "Parse template"})
         assert resp.status_code == 400
-        assert b"Provide a template" in resp.data
+        assert b"Choose a template, paste template text, or upload a file." in resp.data
 
     def test_template_with_no_variables_rejected(self, client):
         resp = client.post(
@@ -231,3 +231,140 @@ class TestRenderSandboxing:
         )
         assert resp.status_code == 400
         assert b"Rendering failed" in resp.data
+
+
+class TestTemplateLibrary:
+    def test_index_has_no_picker_when_no_directory_configured(self, client):
+        html = client.get("/").data.decode()
+        assert 'name="template_choice"' not in html
+
+    def test_index_lists_directory_templates_in_a_select(self, client, library):
+        (library / "greeting.j2").write_text(TEMPLATE)
+        html = client.get("/").data.decode()
+        assert 'name="template_choice"' in html
+        assert 'value="greeting.j2"' in html
+
+    def test_empty_directory_shows_no_picker(self, client, library):
+        html = client.get("/").data.decode()
+        assert 'name="template_choice"' not in html
+
+    def test_picker_comes_before_the_editor_and_the_upload_field(self, client, library):
+        (library / "greeting.j2").write_text(TEMPLATE)
+        html = client.get("/").data.decode()
+        assert (
+            html.index('name="template_choice"')
+            < html.index('name="template_text"')
+            < html.index('name="template_file"')
+        )
+
+    def test_load_button_fills_the_editor_without_js(self, client, library):
+        (library / "greeting.j2").write_text(TEMPLATE)
+        resp = client.post(
+            "/", data={"template_choice": "greeting.j2", "load": "Load into editor"}
+        )
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        # Still on the first page, with the file's text in the textarea.
+        assert 'name="template_text"' in html
+        assert "Hello {{ S_username }}" in html
+
+    def test_loading_does_not_skip_ahead_to_the_form(self, client, library):
+        (library / "greeting.j2").write_text(TEMPLATE)
+        resp = client.post(
+            "/", data={"template_choice": "greeting.j2", "load": "Load into editor"}
+        )
+        assert b'name="S_username"' not in resp.data
+
+    def test_load_without_a_choice_is_rejected(self, client, library):
+        (library / "greeting.j2").write_text(TEMPLATE)
+        resp = client.post("/", data={"template_choice": "", "load": "Load into editor"})
+        assert resp.status_code == 400
+        assert b"Choose a template to load" in resp.data
+
+    def test_unlisted_choice_is_rejected(self, client, library):
+        (library / "greeting.j2").write_text(TEMPLATE)
+        resp = client.post(
+            "/", data={"template_choice": "../../etc/passwd", "load": "Load into editor"}
+        )
+        assert resp.status_code == 400
+
+    def test_template_deleted_between_load_and_submit_reports_cleanly(self, client, library):
+        target = library / "greeting.j2"
+        target.write_text(TEMPLATE)
+        form = client.get("/")  # picker built while the file still exists
+        assert b'value="greeting.j2"' in form.data
+        # WTForms rejects a choice that has vanished from the directory.
+        target.unlink()
+        resp = client.post(
+            "/", data={"template_choice": "greeting.j2", "load": "Load into editor"}
+        )
+        assert resp.status_code == 400
+
+    def test_chosen_template_parses_when_the_editor_is_left_empty(self, client, library):
+        (library / "greeting.j2").write_text(TEMPLATE)
+        resp = client.post(
+            "/",
+            data={
+                "template_choice": "greeting.j2",
+                "template_text": "",
+                "submit": "Parse template",
+            },
+        )
+        assert resp.status_code == 200
+        assert b'name="S_username"' in resp.data
+
+    def test_edited_text_wins_over_the_chosen_template(self, client, library):
+        (library / "greeting.j2").write_text(TEMPLATE)
+        resp = client.post(
+            "/",
+            data={
+                "template_choice": "greeting.j2",
+                "template_text": "Edited {{ S_edited }}",
+                "submit": "Parse template",
+            },
+        )
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert 'name="S_edited"' in html
+        assert 'name="S_username"' not in html
+
+    def test_editing_a_loaded_template_never_touches_the_file(self, client, library):
+        target = library / "greeting.j2"
+        target.write_text(TEMPLATE)
+        template_source = TEMPLATE.replace("Hello", "Edited")
+        client.post(
+            "/render",
+            data={
+                "template_source": template_source,
+                "S_username": "Alice",
+                "N_user_age": "30",
+                "R_color": "red",
+                "submit": "Render template",
+            },
+        )
+        assert target.read_text() == TEMPLATE
+
+    def test_endpoint_serves_a_template_as_plain_text(self, client, library):
+        (library / "greeting.j2").write_text(TEMPLATE)
+        resp = client.get("/template-library?name=greeting.j2")
+        assert resp.status_code == 200
+        assert resp.mimetype == "text/plain"
+        assert resp.headers["X-Content-Type-Options"] == "nosniff"
+        assert resp.data.decode() == TEMPLATE
+
+    def test_endpoint_rejects_unknown_and_traversal_names(self, client, library):
+        (library / "greeting.j2").write_text(TEMPLATE)
+        for name in ["nope.j2", "../../etc/passwd", "/etc/passwd", ""]:
+            assert client.get("/template-library", query_string={"name": name}).status_code == 404
+
+    def test_endpoint_is_404_when_no_directory_configured(self, client):
+        assert client.get("/template-library?name=greeting.j2").status_code == 404
+
+    def test_index_loads_the_picker_script(self, client, library):
+        (library / "greeting.j2").write_text(TEMPLATE)
+        assert b"js/template_library.js" in client.get("/").data
+
+    def test_load_button_ships_visible_for_no_js_use(self, client, library):
+        (library / "greeting.j2").write_text(TEMPLATE)
+        html = client.get("/").data.decode()
+        assert re.search(r'id="load-template"(?![^>]*\bhidden\b)', html)

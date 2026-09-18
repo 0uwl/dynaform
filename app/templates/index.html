@@ -3,12 +3,41 @@
 {% block content %}
   <div class="row justify-content-center">
     <div class="col-lg-8">
-      <p class="lead">Upload a Jinja2 template (or paste its text) and DynaForm builds a form
-        for its <code>S_</code>/<code>P_</code>/<code>N_</code>/<code>B_</code>/<code>R_</code>
+      <p class="lead">Pick a ready-made template, paste one, or upload a <code>.j2</code> file, and
+        DynaForm builds a form for its <code>S_</code>/<code>P_</code>/<code>N_</code>/<code>B_</code>/<code>R_</code>
         variables. Nothing is stored -- it only renders the output.</p>
 
       <form method="post" enctype="multipart/form-data" novalidate>
         {{ form.hidden_tag() }}
+
+        {% if form.library_templates %}
+          <div class="mb-3">
+            {{ form.template_choice.label(class="form-label") }}
+            <div class="d-flex gap-2 align-items-start flex-wrap">
+              {{ form.template_choice(class="form-select" + (" is-invalid" if form.template_choice.errors else ""),
+                                      style="max-width: 28rem;",
+                                      data_load_url=url_for('dynaform.library_template')) }}
+              {# Ships visible so the picker still works without scripting; the
+                 enhancement script hides it and loads on change instead. #}
+              {{ form.load(class="btn btn-outline-secondary", id="load-template") }}
+            </div>
+            {% for error in form.template_choice.errors %}
+              <div class="invalid-feedback d-block">{{ error }}</div>
+            {% endfor %}
+            <div class="form-text">
+              Loading a template copies it into the editor below. Your edits there are not saved
+              back to the file.
+              <span id="template-choice-status" class="ms-1" role="status" aria-live="polite"></span>
+            </div>
+          </div>
+        {% endif %}
+
+        <div class="mb-3">
+          {{ form.template_text.label(class="form-label") }}
+          {%- set placeholder %}{% raw %}Hello {{ S_name }}, you are {{ N_age }}.{% endraw %}{% endset %}
+          {{ form.template_text(class="form-control", rows=14, spellcheck="false",
+                                placeholder=placeholder) }}
+        </div>
 
         <div class="mb-3">
           {{ form.template_file.label(class="form-label") }}
@@ -16,15 +45,14 @@
           {% for error in form.template_file.errors %}
             <div class="invalid-feedback">{{ error }}</div>
           {% endfor %}
-        </div>
-
-        <div class="mb-3">
-          {{ form.template_text.label(class="form-label") }}
-          {{ form.template_text(class="form-control", rows=10, placeholder="Hello {{ S_name }}, you are {{ N_age }}.") }}
+          <div class="form-text">An uploaded file takes precedence over the editor text.</div>
         </div>
 
         {{ form.submit(class="btn btn-primary") }}
       </form>
     </div>
   </div>
+{% endblock %}
+{% block scripts %}
+  <script src="{{ url_for('static', filename='js/template_library.js') }}"></script>
 {% endblock %}
