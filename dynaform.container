@@ -3,16 +3,23 @@ Description=DynaForm
 After=network-online.target
 
 [Container]
-Image=localhost/dynaform:latest
+# The published image, so a fresh host can start this unit without building
+# anything. `:latest` follows the newest full release -- a pre-release tag
+# never moves it. Pin a version instead by replacing the tag (see the README).
+Image=ghcr.io/0uwl/dynaform:latest
 PublishPort=8000:8000
 Environment=BIND_HOST=0.0.0.0
 Environment=BIND_PORT=8000
 Environment=GUNICORN_WORKERS=2
+# Required, and deliberately empty: DynaForm signs its CSRF tokens with this and
+# refuses to start without it, logging these same instructions. Generate a key
+# with `openssl rand -base64 32` and paste it after the `=`. To keep it out of
+# this file, the README describes handing it to Podman as a secret instead.
+Environment=SECRET_KEY=
 # Host directory of ready-made .j2 templates, listed in the picker on the first
 # page. Read-only: DynaForm never writes to it. Adjust the host path to taste;
 # drop ":Z" on systems without SELinux.
 Volume=%h/dynaform-templates:/templates:ro,Z
-Secret=dynaform-secret-key,type=env,target=SECRET_KEY
 
 [Service]
 Restart=on-failure
