@@ -20,13 +20,21 @@ RUN apt-get update \
 RUN useradd --create-home --uid 1000 dynaform
 WORKDIR /app
 
-# pip ships in the base image and is scanned like anything else; 25.0.1
-# carries five fixable CVEs of its own. Upgrading it is the one-line fix --
-# the thorough one is a multi-stage build that leaves pip out of the final
-# image altogether, since nothing at runtime needs it.
+# pip ships in the base image and is scanned like anything else, so it is
+# upgraded first (25.0.1 carried five fixable CVEs) and then removed once the
+# dependencies are in place.
+#
+# Removing it is not tidiness. pip 26 ships a PEP 770 SBOM declaring the
+# packages it vendors, which Trivy reads -- so an up-to-date pip reports CVEs
+# against its *bundled* msgpack and setuptools (GHSA-6v7p-g79w-8964,
+# CVE-2025-47273, CVE-2026-59890) that no upgrade of pip itself can clear.
+# Nothing at run time needs pip: gunicorn runs the app. Taking it out drops
+# that whole inventory from the image, and a runtime that cannot install
+# packages is the better shape anyway.
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -r requirements.txt
+    && pip install --no-cache-dir -r requirements.txt \
+    && pip uninstall --yes pip
 
 COPY app/ app/
 
