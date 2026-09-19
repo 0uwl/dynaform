@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 from flask import Blueprint, Response, current_app, flash, render_template, request
-from jinja2.exceptions import SecurityError, TemplateError, UndefinedError
+from jinja2 import BaseLoader, TemplateNotFound
+from jinja2.exceptions import SecurityError
 from jinja2.sandbox import SandboxedEnvironment
 
 from .forms import UploadForm, build_dynamic_form
@@ -11,7 +12,30 @@ from .template_parser import TemplateValidationError, parse_template
 
 bp = Blueprint("dynaform", __name__)
 
-_RENDER_ENV = SandboxedEnvironment()
+
+class _NoOtherTemplates(BaseLoader):
+    """Refuse {% include %}, {% import %} and {% extends %}, in words.
+
+    DynaForm renders one template on its own, so there is nothing for these to
+    load -- and giving the environment a real loader is exactly how a template
+    would get to read files off the host. Without a loader at all Jinja raises
+    TypeError("no loader for this environment specified"), which is neither
+    caught below nor meaningful to whoever wrote the template; TemplateNotFound
+    is both.
+    """
+
+    def get_source(self, environment, template):
+        raise TemplateNotFound(
+            template,
+            message=(
+                f"this template refers to another template ({template}), and "
+                "DynaForm renders one template on its own -- there are no "
+                "others to include, import or extend"
+            ),
+        )
+
+
+_RENDER_ENV = SandboxedEnvironment(loader=_NoOtherTemplates())
 
 
 def _ordered_items(parsed):
@@ -151,10 +175,12 @@ def render():
         current_app.logger.debug(f"  Retrieved a value for variable '{spec.var_name}'")
 
         if spec.prefix != "B" and spec.has_default and value in (None, ""):
-            # Leave it undefined so Jinja's own `default` filter supplies the
-            # value. Substituting spec.default here would be a second
-            # implementation of that filter and would disagree with it over
-            # `default(x, true)`, where falsy counts as missing too.
+            # Leave it undefined so Jinja's own `default` filter supplies
+            # the value, rather than substituting spec.default here. Both give
+            # the same output for this field -- the filter is in the template
+            # and runs either way -- but leaving it undefined is what bare
+            # Jinja does, so a variable used a second time *without* the filter
+            # renders empty here exactly as it would anywhere else.
             #
             # Checkboxes are excluded on purpose: an unchecked box submits
             # nothing, so omitting it would let default(true) tick it back on
@@ -176,13 +202,27 @@ def render():
 
     try:
         output = _RENDER_ENV.from_string(source).render(**context)
-    except (SecurityError, UndefinedError, TemplateError) as exc:
-        if isinstance(exc, SecurityError):
-            current_app.logger.error(f"Sandbox blocked the template: {exc}")
-        else:
-            current_app.logger.warning(f"Render failed: {exc}")
-        flash(f"Rendering failed: {exc}", "danger")
-        return render_template("form.html", form=dynamic_form, items=_ordered_items(parsed)), 400
+    except SecurityError as exc:
+        # The sandbox refusing a template is the one failure here that is not
+        # a mistake: it is someone reaching outside it, so it stays loud.
+        current_app.logger.error(f"Sandbox blocked the template: {exc}")
+        return _render_failed(exc, dynamic_form, parsed)
+    except Exception as exc:
+        # Deliberately everything else. Rendering runs code the visitor wrote,
+        # and a template can raise whatever it likes: {{ 1/0 }} is a
+        # ZeroDivisionError, and arithmetic on a field left blank is a
+        # TypeError. Those are mistakes in the template, so they belong on the
+        # form with the rest of the validation errors -- a 500 would blame the
+        # service for something the template did. The try wraps one call, so
+        # this cannot swallow a bug in DynaForm's own handling around it.
+        current_app.logger.warning(f"Render failed: {type(exc).__name__}: {exc}")
+        return _render_failed(exc, dynamic_form, parsed)
 
     current_app.logger.info(f"Template rendered successfully ({len(output)} bytes output)")
     return render_template("result.html", output=output)
+
+
+def _render_failed(exc: Exception, dynamic_form, parsed):
+    """Put a rendering failure back on the form the values came from."""
+    flash(f"Rendering failed: {exc}", "danger")
+    return render_template("form.html", form=dynamic_form, items=_ordered_items(parsed)), 400

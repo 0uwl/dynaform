@@ -592,3 +592,98 @@ class TestTemplateDefaults:
         )
         assert resp.status_code == 200
         assert "Alice/Alice" in resp.data.decode()
+
+
+class TestRenderFailuresStayOnTheForm:
+    """A template can raise anything; none of it is the service's fault."""
+
+    def _render(self, client, template, **fields):
+        resp = client.post("/", data={"template_text": template, "submit": "Parse template"})
+        assert resp.status_code == 200, "template should parse"
+        source = _extract(resp.data.decode(), "template_source")
+        return client.post(
+            "/render",
+            data={"template_source": source, "submit": "Render template", **fields},
+        )
+
+    def test_include_is_refused_in_words(self, client):
+        # No loader at all raises TypeError("no loader for this environment
+        # specified"), which used to escape as a 500 and told the author
+        # nothing.
+        resp = self._render(client, '{% include "other.j2" %}{{ S_x }}', S_x="a")
+        assert resp.status_code == 400
+        body = resp.data.decode()
+        assert "Rendering failed" in body
+        assert "no others to include" in body
+
+    def test_import_is_refused_the_same_way(self, client):
+        resp = self._render(client, '{% import "m.j2" as m %}{{ S_x }}', S_x="a")
+        assert resp.status_code == 400
+        assert "Rendering failed" in resp.data.decode()
+
+    def test_a_template_that_divides_by_zero_is_a_400(self, client):
+        resp = self._render(client, "{{ 1 / 0 }}{{ S_x }}", S_x="a")
+        assert resp.status_code == 400
+        assert b"Rendering failed" in resp.data
+
+    def test_arithmetic_on_a_field_left_blank_is_a_400(self, client):
+        # Reachable without trying: a conditional child is optional, so N_
+        # arrives as "" and any arithmetic on it raises TypeError.
+        template = "{% if B_opt %}{{ N_opt_count + 1 }}{% endif %}{{ S_x }}"
+        resp = self._render(client, template, S_x="a", B_opt="y")
+        assert resp.status_code == 400
+        assert b"Rendering failed" in resp.data
+
+    def test_the_sandbox_refusal_still_comes_through(self, client):
+        # Reaching one attribute deep yields an unsafe-undefined that prints
+        # as empty; it is traversing further that the sandbox refuses.
+        resp = self._render(client, "{{ S_x.__class__.__init__.__globals__ }}", S_x="a")
+        assert resp.status_code == 400
+        assert b"Rendering failed" in resp.data
+
+    def test_a_working_template_is_unaffected(self, client):
+        resp = self._render(client, "ok {{ S_x }}", S_x="value")
+        assert resp.status_code == 200
+        assert b"ok value" in resp.data
+
+    def test_raw_keeps_another_system_s_variables_literal(self, client):
+        # The documented escape hatch for templates borrowed from Ansible,
+        # Helm and friends.
+        template = "{% raw %}{{ ansible_hostname }}{% endraw %} in {{ S_env }}"
+        resp = self._render(client, template, S_env="prod")
+        assert resp.status_code == 200
+        assert "{{ ansible_hostname }} in prod" in resp.data.decode()
+
+
+class TestOwnJinjaLogic:
+    """Logic that declares its own variables needs no DynaForm prefix."""
+
+    def _parse(self, client, template):
+        return client.post("/", data={"template_text": template, "submit": "Parse template"})
+
+    def test_set_declared_variable_is_not_a_field(self, client):
+        resp = self._parse(client, '{% set greeting = "hi" %}{{ greeting }}{{ S_name }}')
+        assert resp.status_code == 200
+        html_out = resp.data.decode()
+        assert 'name="S_name"' in html_out
+        assert 'name="greeting"' not in html_out
+
+    def test_loop_variables_are_not_fields(self, client):
+        resp = self._parse(client, "{% for item in [1, 2] %}{{ item }}{% endfor %}{{ S_name }}")
+        assert resp.status_code == 200
+        assert b'name="item"' not in resp.data
+
+    def test_jinja_globals_are_not_fields(self, client):
+        resp = self._parse(client, "{% for i in range(3) %}{{ i }}{% endfor %}{{ S_name }}")
+        assert resp.status_code == 200
+        assert b'name="range"' not in resp.data
+
+    def test_a_macro_is_not_a_field(self, client):
+        template = "{% macro kv(k, v) %}{{ k }}={{ v }}{% endmacro %}{{ kv('h', S_name) }}"
+        assert self._parse(client, template).status_code == 200
+
+    def test_an_undefined_variable_is_still_refused(self, client):
+        # This is the check that catches a forgotten prefix, so it stays.
+        resp = self._parse(client, "{{ mystery }}{{ S_name }}")
+        assert resp.status_code == 400
+        assert b"Unrecognized variable" in resp.data

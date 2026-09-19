@@ -37,6 +37,60 @@ Labels are derived from the name: the prefix is dropped, underscores become spac
 first word is capitalized (`N_user_age` -> "User age"). Fields appear in the order the variables
 first occur in the template source.
 
+### Your own Jinja logic
+
+The prefix rule applies only to variables the template *doesn't define itself*. Anything Jinja
+declares as it goes — `{% set %}`, loop variables, macro arguments, `{% with %}` — needs no prefix
+and never becomes a form field. So does Jinja's own furniture: `range()`, `namespace()`, `dict()`,
+`loop.index`, every filter and test.
+
+That means ordinary templating works as you'd expect, with the form asking only for the
+`S_`/`P_`/`N_`/`B_`/`R_` variables:
+
+```jinja
+{% set scheme = "https" if B_tls else "http" %}
+upstream {{ S_service }} {
+{% for port in [8080, 8443] %}
+    server {{ S_host }}:{{ port }};
+{% endfor %}
+}
+listen {{ scheme }}://{{ S_host }};
+```
+
+`scheme` and `port` are the template's own. The form asks for **Service**, **Host** and **Tls**.
+
+One thing is refused: a variable that is never defined anywhere and carries no prefix.
+
+```jinja
+Hello {{ username }}
+```
+
+> Unrecognized variable name(s): username. Every variable must start with S_, P_, N_, B_, or R_.
+
+That is deliberate — it's the check that catches a forgotten prefix, which would otherwise leave
+you with a form missing a field and output with a silent blank in it. Either prefix the name so it
+becomes a field (`S_username`), or define it in the template with `{% set %}`.
+
+#### Templates from other systems
+
+Variables belonging to something else — Ansible, Helm, a CI system — would be consumed by this
+render and come out empty. Wrap them in `{% raw %}` to pass them through untouched:
+
+```jinja
+server {{ S_host }}
+inventory {% raw %}{{ ansible_hostname }}{% endraw %}
+```
+
+renders as `server example.com` and `inventory {{ ansible_hostname }}`, leaving the second
+template's variables for the second template's renderer.
+
+#### What isn't available
+
+`{% include %}`, `{% import %}` and `{% extends %}` don't work: DynaForm renders one template on
+its own, and there is no template directory for them to reach into — which is also what stops a
+template reading files off the host. Using them fails the render with a message saying so, rather
+than producing anything.
+
 ### Radio groups
 
 Radio variables are named `R_<group>_<option>`. The group name is the single word right after
@@ -97,6 +151,10 @@ A few specifics:
 - **Only literals can be shown.** `{{ S_ref | default(S_name) }}` still makes the field optional
   and Jinja still resolves it at render time, but the form has nothing to prefill — it cannot know
   the value before rendering, and guessing would be worse than showing nothing.
+- **The default applies where the filter is, not everywhere.** Leave a defaulted field blank and
+  `{{ S_x | default("John") }}` renders `John`, while a bare `{{ S_x }}` elsewhere in the same
+  template renders empty — the variable is undefined and only the filter fills it in. Repeat the
+  filter, or fill the field in, if you use the variable more than once.
 
 #### Defaults on password fields
 
