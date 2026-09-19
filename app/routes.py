@@ -207,14 +207,15 @@ def render():
         # a mistake: it is someone reaching outside it, so it stays loud.
         current_app.logger.error(f"Sandbox blocked the template: {exc}")
         return _render_failed(exc, dynamic_form, parsed)
-    except Exception as exc:
-        # Deliberately everything else. Rendering runs code the visitor wrote,
-        # and a template can raise whatever it likes: {{ 1/0 }} is a
-        # ZeroDivisionError, and arithmetic on a field left blank is a
-        # TypeError. Those are mistakes in the template, so they belong on the
-        # form with the rest of the validation errors -- a 500 would blame the
-        # service for something the template did. The try wraps one call, so
-        # this cannot swallow a bug in DynaForm's own handling around it.
+    except Exception as exc:  # noqa: BLE001 - the blind catch is the point
+        # Rendering runs code the visitor wrote, and a template can raise
+        # whatever it likes: {{ 1/0 }} is a ZeroDivisionError, arithmetic on a
+        # field left blank is a TypeError, and any filter can raise its own.
+        # Enumerating them is a losing game, and each one missed is a 500
+        # blaming the service for what the template did -- so they all belong
+        # on the form with the rest of what is wrong with the submission. The
+        # try wraps a single call, so this cannot swallow a bug in DynaForm's
+        # own handling around it.
         current_app.logger.warning(f"Render failed: {type(exc).__name__}: {exc}")
         return _render_failed(exc, dynamic_form, parsed)
 
