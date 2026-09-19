@@ -19,7 +19,7 @@ Environment=SECRET_KEY=
 # Host directory of ready-made .j2 templates, listed in the picker on the first
 # page. Read-only: DynaForm never writes to it. Adjust the host path to taste;
 # drop ":Z" on systems without SELinux.
-Volume=%h/dynaform-templates:/templates:ro,Z
+Volume=%h/.local/share/dynaform/templates:/templates:ro,Z
 
 [Service]
 Restart=on-failure
