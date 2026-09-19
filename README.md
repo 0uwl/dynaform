@@ -65,6 +65,63 @@ Admin: {{ S_admin_name }} / {{ P_admin_pass }}
 
 Ticking **Admin** unfolds the "Admin name" and "Admin pass" inputs.
 
+### Default values
+
+Give a variable a default with Jinja's own [`default`
+filter](https://jinja.palletsprojects.com/en/stable/templates/#jinja-filters.default) (or its
+`d` alias). There is no second file and no DynaForm-specific syntax — the template stays an
+ordinary Jinja template, and renders the same way outside DynaForm:
+
+```jinja
+Hello {{ S_username | default("John Doe") }}, you are {{ N_user_age | default(45) }}.
+```
+
+The form arrives with those values already in the boxes. Edit them, or leave them as they are.
+Clear one and submit, and the default is what gets rendered — DynaForm leaves the variable
+undefined and lets the filter do its job, so the value you get is exactly the one the template
+says, `default(x, true)` included.
+
+**A default makes the field optional.** It has to: submitting the field blank is how you ask for
+the default, so it can't also be required. Nothing in the template says so out loud, which is why
+it is written down here — adding a default to tidy up a form also stops that field being
+mandatory.
+
+A few specifics:
+
+- **Checkboxes and radios start in that state rather than falling back to it.**
+  `{{ B_admin | default(true) }}` ships the box ticked; `{{ R_color_blue | default(true) }}`
+  preselects Blue. They can't work as fallbacks: an unchecked box submits nothing at all, so a
+  fallback would tick it straight back on and leave no way to turn it off.
+- **The first default for a variable wins** in the form. Writing two is a slip, and a form can
+  only show one. (Jinja applies each one where it stands, so such a template renders both.)
+- **Only literals can be shown.** `{{ S_ref | default(S_name) }}` still makes the field optional
+  and Jinja still resolves it at render time, but the form has nothing to prefill — it cannot know
+  the value before rendering, and guessing would be worse than showing nothing.
+
+#### Defaults on password fields
+
+You can default a `P_` field, and it works like any other. Be aware of where the value ends up:
+
+```jinja
+{{ P_token | default("from-template") }}
+```
+
+The password input itself never carries it — WTForms doesn't render a password's value, so the
+box shows up empty with a note that a default is set. **But the default lives in the template
+text, and the template text is on the page**: in the editor on the first page, and in the hidden
+field that carries the source to the second. So the value appears in the HTML of both pages, in
+browser history, and anywhere that caches them. DynaForm also has no authentication, so anyone who
+can reach it can read the template and its defaults.
+
+That is fine for a shared team value or a throwaway credential. It is not fine for anything you
+would have to rotate if it leaked — type those in instead.
+
+#### If you already use `default`
+
+Before this existed, `default` in a DynaForm template did nothing: every variable was passed to
+the renderer whether or not its field was filled in, and the filter only fires on variables that
+are *undefined*. Such templates now behave as they read. Worth a look if you have any.
+
 ## Template directory
 
 Point `TEMPLATE_DIR` at a directory of ready-made templates and DynaForm lists them in a picker

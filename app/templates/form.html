@@ -34,6 +34,15 @@
               {{ bound.label(class="form-label") }}
               {{ bound(class="form-control" + (" is-invalid" if bound.errors else ""),
                         autocomplete=("off" if spec.prefix == "P" else "on")) }}
+              {# A template default arrives prefilled, so the value in the box is
+                 the affordance -- except for a password, whose value WTForms
+                 never renders. Say one is set rather than printing it on screen:
+                 the field still works the same, and a shoulder does not read it. #}
+              {% if spec.has_default and spec.prefix == "P" %}
+                <div class="form-text">
+                  The template sets a default for this field. Leave it blank to use that.
+                </div>
+              {% endif %}
             {% endif %}
 
             {% for error in bound.errors %}

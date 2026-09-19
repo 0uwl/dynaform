@@ -149,6 +149,21 @@ def render():
         # mapping; the values belong to whoever typed them, and S_api_token is
         # no less sensitive than P_password -- the prefix does not say which.
         current_app.logger.debug(f"  Retrieved a value for variable '{spec.var_name}'")
+
+        if spec.prefix != "B" and spec.has_default and value in (None, ""):
+            # Leave it undefined so Jinja's own `default` filter supplies the
+            # value. Substituting spec.default here would be a second
+            # implementation of that filter and would disagree with it over
+            # `default(x, true)`, where falsy counts as missing too.
+            #
+            # Checkboxes are excluded on purpose: an unchecked box submits
+            # nothing, so omitting it would let default(true) tick it back on
+            # and leave the user no way to turn it off. For B_ (and for radio
+            # groups below) a default can only mean the state the form starts
+            # in.
+            current_app.logger.debug(f"  Leaving '{spec.var_name}' to its template default")
+            continue
+
         if value is None:
             value = False if spec.prefix == "B" else ""
         context[spec.var_name] = value

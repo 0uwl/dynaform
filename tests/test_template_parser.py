@@ -140,3 +140,109 @@ class TestConditionalFields:
     def test_radio_group_without_matching_checkbox_has_no_parent(self):
         parsed = parse_template("{{ R_color_red }} {{ R_color_blue }}")
         assert parsed.radio_groups[0].parent is None
+
+
+class TestLiteralDefaults:
+    def _field(self, parsed, var_name):
+        return next(f for f in parsed.fields if f.var_name == var_name)
+
+    def test_string_default_is_extracted(self):
+        parsed = parse_template('{{ S_name | default("John Doe") }}')
+        assert self._field(parsed, "S_name").default == "John Doe"
+
+    def test_number_default_keeps_its_type(self):
+        parsed = parse_template("{{ N_age | default(45) }}")
+        assert self._field(parsed, "N_age").default == 45
+
+    def test_the_d_alias_works_too(self):
+        parsed = parse_template('{{ S_nick | d("Jo") }}')
+        assert self._field(parsed, "S_nick").default == "Jo"
+
+    def test_a_field_without_a_default_has_none(self):
+        parsed = parse_template("{{ S_name }}")
+        assert self._field(parsed, "S_name").default is None
+
+    def test_variable_is_still_discovered_through_the_filter(self):
+        parsed = parse_template('{{ S_name | default("John") }}')
+        assert [f.var_name for f in parsed.fields] == ["S_name"]
+
+    def test_first_occurrence_wins(self):
+        parsed = parse_template('{{ S_x | default("first") }} {{ S_x | default("second") }}')
+        assert self._field(parsed, "S_x").default == "first"
+
+    def test_non_literal_defaults_have_no_shown_value(self):
+        # Jinja still honours `default(S_other)` when rendering; it just
+        # cannot be shown in the form, so the form offers nothing rather than
+        # guessing.
+        parsed = parse_template('{{ S_name }}{{ S_ref | default(S_name) }}')
+        assert self._field(parsed, "S_ref").default is None
+
+    def test_non_literal_defaults_still_count_as_defaults(self):
+        # Nothing to show, but the field is still optional and Jinja still
+        # resolves it -- so it must not be treated as having no default.
+        parsed = parse_template('{{ S_name }}{{ S_ref | default(S_name) }}')
+        assert self._field(parsed, "S_ref").has_default is True
+
+    def test_a_literal_default_also_sets_has_default(self):
+        parsed = parse_template('{{ S_name | default("John") }}')
+        assert self._field(parsed, "S_name").has_default is True
+
+    def test_a_field_without_a_default_says_so(self):
+        parsed = parse_template("{{ S_name }}")
+        assert self._field(parsed, "S_name").has_default is False
+
+    def test_default_on_an_expression_is_ignored(self):
+        parsed = parse_template('{{ S_a }}{{ (S_a ~ "x") | default("y") }}')
+        assert self._field(parsed, "S_a").default is None
+
+    def test_default_survives_a_chained_filter(self):
+        parsed = parse_template('{{ S_name | default("John") | upper }}')
+        assert self._field(parsed, "S_name").default == "John"
+
+    def test_default_inside_a_tag_is_found(self):
+        parsed = parse_template('{% if S_name | default("John") %}hi{% endif %}')
+        assert self._field(parsed, "S_name").default == "John"
+
+    def test_a_keyword_form_default_still_counts(self):
+        # `default(default_value="kw")` puts the literal in kwargs, so there is
+        # nothing to prefill -- but the field still has a default.
+        parsed = parse_template('{{ S_y | default(default_value="kw") }}')
+        field = self._field(parsed, "S_y")
+        assert field.has_default is True
+        assert field.default is None
+
+    def test_an_empty_string_default_is_a_default(self):
+        parsed = parse_template('{{ S_z | default("") }}')
+        field = self._field(parsed, "S_z")
+        assert field.has_default is True
+        assert field.default == ""
+
+    def test_checkbox_default_is_the_initial_state(self):
+        parsed = parse_template("{% if B_admin | default(true) %}x{% endif %}")
+        assert self._field(parsed, "B_admin").default is True
+
+
+class TestRadioDefaults:
+    def test_truthy_default_preselects_that_option(self):
+        template = "{{ R_color_red }}{{ R_color_blue | default(true) }}{{ R_color_green }}"
+        parsed = parse_template(template)
+        assert parsed.radio_groups[0].default == "blue"
+
+    def test_falsy_default_selects_nothing(self):
+        # `default(false)` says what the option is worth when missing, not
+        # which option the group should start on.
+        template = "{{ R_color_red }}{{ R_color_blue | default(false) }}"
+        assert parse_template(template).radio_groups[0].default is None
+
+    def test_no_default_selects_nothing(self):
+        parsed = parse_template("{{ R_color_red }}{{ R_color_blue }}")
+        assert parsed.radio_groups[0].default is None
+
+    def test_earliest_truthy_option_wins(self):
+        template = "{{ R_color_red | default(true) }}{{ R_color_blue | default(true) }}"
+        assert parse_template(template).radio_groups[0].default == "red"
+
+    def test_group_options_are_unaffected_by_the_default(self):
+        template = "{{ R_color_red }}{{ R_color_blue | default(true) }}"
+        parsed = parse_template(template)
+        assert parsed.radio_groups[0].options == [("red", "Red"), ("blue", "Blue")]

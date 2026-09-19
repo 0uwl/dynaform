@@ -68,14 +68,25 @@ def build_dynamic_form(parsed: ParsedTemplate) -> type[FlaskForm]:
             # cross-validated against their parent checkbox's state -- add
             # server-side "required if parent checked" if that's ever needed.
             validators = [Optional()]
+        elif spec.has_default:
+            # A default makes the field optional by implication: submitting it
+            # blank is how you ask for the default, so it cannot also be
+            # required. Nothing in the template says so, which is why the
+            # README spells it out.
+            validators = [Optional()]
         else:
             validators = [InputRequired()]
-        attrs[spec.var_name] = field_cls(spec.label, validators=validators)
+        # default=None is what WTForms already assumes, so an undefaulted
+        # field is built exactly as before. A PasswordField never renders its
+        # value, so a P_ default prefills without reaching the markup.
+        attrs[spec.var_name] = field_cls(spec.label, validators=validators, default=spec.default)
 
     for group in parsed.radio_groups:
         validators = [Optional()] if group.parent is not None else [InputRequired()]
+        # A preselected option always submits, so the group can keep
+        # InputRequired: the default cannot make it fail.
         attrs["R_" + group.name] = RadioField(
-            group.label, choices=group.options, validators=validators
+            group.label, choices=group.options, validators=validators, default=group.default
         )
 
     return type("DynamicForm", (FlaskForm,), attrs)
