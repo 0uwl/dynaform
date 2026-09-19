@@ -536,6 +536,63 @@ dynaform.md             original design note
 plan.md                 implementation plan and rationale
 ```
 
+## Ideas for later
+
+Neither of these is committed to or designed; they are written down so the reasoning survives.
+
+### Including other templates from the directory
+
+`{% include %}` is refused today, and the reason is not arbitrary: the render environment has no
+loader, which is precisely what stops a template reading files off the host. A loader scoped to
+`TEMPLATE_DIR` would change that answer from "never" to "only from the directory the operator
+mounted" — and that directory is already fully readable through the picker, so it grants no
+reach that a visitor does not already have. Reusable partials (a shared header, a common block
+repeated across templates) look worth it.
+
+The obstacle is not the loader, it is the two-request model. Today the template travels as *text*
+in a hidden field, and `/render` re-parses exactly what the form was built from. An include is a
+second file, resolved from disk at render time, which means:
+
+- **The form must know about it at parse time.** `find_undeclared_variables` only looks at the
+  template it is given, so an include's variables would not become fields unless the parser
+  follows includes itself. `jinja2.meta.find_referenced_templates` gives the names to follow, and
+  returns `None` for a name it cannot resolve statically (`{% include S_choice %}`) — those would
+  have to be refused, or the form would be missing fields it cannot know about.
+- **The two requests could disagree.** The file could change, or be deleted, between building the
+  form and rendering it. The template text is carried precisely so that cannot happen; an include
+  reintroduces it.
+- **Edited and pasted templates need an answer.** A template typed into the editor could name an
+  include that only exists if a directory is mounted at all.
+- **Any loader must reuse the containment checks in `template_library.py`** — resolve, confirm the
+  path stays inside the root, apply the size cap, skip dotfiles — rather than joining a name onto
+  a path itself. That scan is where the safety currently lives.
+
+A smaller version worth weighing first: resolve includes at *parse* time by splicing the included
+text into the source before it is carried to the form. Reuse without a loader, at the cost of an
+include being a snapshot rather than a live reference.
+
+### An `L_` prefix for repeatable elements
+
+A list of things — server names, users, ports — where one form field is not enough and the
+template wants to loop:
+
+```jinja
+{% for server in L_servers %}
+    server {{ server }};
+{% endfor %}
+```
+
+Deferred rather than designed. The questions to answer when it comes back:
+
+- **What is an element?** A list of plain strings is a much smaller feature than a list of records
+  with their own sub-fields, which needs nested field specs and nested labels.
+- **How does the parser know?** `L_servers` is iterated, not printed, so the prefix has to be
+  taught to `_NAME_RE` and `FIELD_CLASSES`, and the "every variable is one input" assumption in
+  the form builder stops holding.
+- **How does it look without JavaScript?** Adding and removing rows wants scripting, and this app
+  has kept every feature working without it. WTForms' `FieldList`/`FormField` already map onto the
+  flat `L_servers-0`, `L_servers-1` encoding, so the server side is the easy half.
+
 ## Contributing
 
 A few conventions the existing code follows:
