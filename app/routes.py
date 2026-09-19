@@ -48,41 +48,42 @@ def library_template():
 def parse():
     form = UploadForm()
     if not form.validate_on_submit():
+        current_app.logger.error("Form was not falid")
         return render_template("index.html", form=form), 400
 
     if form.load.data:
+        current_app.logger.debug("Loading content into text area manually")
         return _load_into_editor(form)
 
     uploaded = form.template_file.data
     if uploaded and uploaded.filename:
+        current_app.logger.info("Loading content from file")
         source = uploaded.read().decode("utf-8", errors="replace")
     elif form.template_text.data and form.template_text.data.strip():
+        current_app.logger.info("Loading content from text area")
         source = form.template_text.data
-    else:
-        # Nothing typed or uploaded: fall back to the picked template, which
-        # is how "choose, then parse" works with scripting unavailable.
-        source = read_template(form.template_choice.data or "") or ""
+    elif form.template_choice.data:
+        current_app.logger.info("Loading content from selected template")
+        source = form.template_choice.data
 
     if not source.strip():
+        current_app.logger.info("Empty or incorrect content was sent")
         flash("Choose a template, paste template text, or upload a file.", "danger")
         return render_template("index.html", form=UploadForm()), 400
 
     try:
         parsed = parse_template(source)
     except TemplateValidationError as exc:
-        current_app.logger.info("Template rejected: %s", exc)
+        current_app.logger.error(f"Template rejected: {exc}")
         flash(str(exc), "danger")
         return render_template("index.html", form=UploadForm()), 400
 
     if not parsed.fields and not parsed.radio_groups:
+        current_app.logger.error("Template does not contain any valid variables")
         flash("Template has no DynaForm variables (S_/P_/N_/B_/R_) to fill in.", "warning")
         return render_template("index.html", form=UploadForm()), 400
 
-    current_app.logger.info(
-        "Template accepted: %d field(s), %d radio group(s)",
-        len(parsed.fields),
-        len(parsed.radio_groups),
-    )
+    current_app.logger.info(f"Template accepted: {len(parsed.fields)} field(s), {len(parsed.radio_groups)} radio group(s)")
 
     dynamic_form = build_dynamic_form(parsed)(formdata=None, template_source=source)
     return render_template("form.html", form=dynamic_form, items=_ordered_items(parsed))
@@ -91,24 +92,23 @@ def parse():
 def _load_into_editor(form: UploadForm):
     """Copy the chosen directory template into the textarea and redisplay.
 
-    The no-JS path behind the "Load into editor" button. The text lands in the
-    form the user is looking at, so edits from here on are theirs alone --
-    nothing goes back to the file.
+    The no-JS path behind the "Load into editor" button
     """
     name = form.template_choice.data or ""
     if not name:
+        current_app.logger.error("No template was recieved")
         flash("Choose a template to load first.", "warning")
         return render_template("index.html", form=form), 400
 
     source = read_template(name)
     if source is None:
-        current_app.logger.info("Directory template not found: %s", name)
+        current_app.logger.error(f"Directory template not found: {name}")
         flash("That template is no longer available.", "danger")
         # Redisplay the submitted form rather than a fresh one so anything
         # already typed into the editor survives the failed load.
         return render_template("index.html", form=form), 404
 
-    current_app.logger.info("Directory template loaded into editor: %s", name)
+    current_app.logger.info(f"Directory template loaded into editor: {name}")
     form.template_text.data = source
     return render_template("index.html", form=form)
 
@@ -117,39 +117,47 @@ def _load_into_editor(form: UploadForm):
 def render():
     source = request.form.get("template_source", "")
     if not source:
-        flash("Session expired -- please submit the template again.", "danger")
+        current_app.logger.error("No source in the request, session has expired")
+        flash("Session expired, please submit the template again.", "danger")
         return render_template("index.html", form=UploadForm()), 400
 
     try:
         parsed = parse_template(source)
     except TemplateValidationError as exc:
-        current_app.logger.warning("Re-validation failed on render: %s", exc)
+        current_app.logger.error(f"Re-validation failed on render: {exc}")
         flash(str(exc), "danger")
         return render_template("index.html", form=UploadForm()), 400
 
     dynamic_form = build_dynamic_form(parsed)()
     if not dynamic_form.validate_on_submit():
-        current_app.logger.info("Submitted form failed validation")
+        current_app.logger.error("Submitted form failed validation")
         return render_template("form.html", form=dynamic_form, items=_ordered_items(parsed)), 400
 
+    current_app.logger.info("Retrieving data from dynamic form")
     context = {}
     for spec in parsed.fields:
         value = getattr(dynamic_form, spec.var_name).data
+        
+        # Never print password field values to log
+        if spec.prefix != "P":
+            current_app.logger.debug(f"  Retrieved value for variable '{spec.var_name}': {value}")
+    
         if value is None:
             value = False if spec.prefix == "B" else ""
         context[spec.var_name] = value
 
     for group in parsed.radio_groups:
         selected = getattr(dynamic_form, "R_" + group.name).data
+        current_app.logger.debug(f"  Selected value from group '{group.name}': {selected}")
         for option, _label in group.options:
             context[f"R_{group.name}_{option}"] = option == selected
 
     try:
         output = _RENDER_ENV.from_string(source).render(**context)
     except (SecurityError, UndefinedError, TemplateError) as exc:
-        current_app.logger.error("Render failed: %s", exc)
+        current_app.logger.error(f"Render failed: {exc}")
         flash(f"Rendering failed: {exc}", "danger")
         return render_template("form.html", form=dynamic_form, items=_ordered_items(parsed)), 400
 
-    current_app.logger.info("Template rendered successfully (%d bytes output)", len(output))
+    current_app.logger.info(f"Template rendered successfully ({len(output)} bytes output)")
     return render_template("result.html", output=output)
