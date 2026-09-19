@@ -156,6 +156,30 @@ class TestRender:
         assert resp.status_code == 400
         assert b"Unrecognized variable" in resp.data
 
+    def test_no_submitted_value_appears_in_logs(self, client, caplog):
+        # Not just passwords: S_api_token is as sensitive as P_password, and
+        # the prefix does not say which. DEBUG because that is the level the
+        # per-field lines are emitted at -- nothing above it should leak either.
+        template_source = self._parse(client)
+        with caplog.at_level("DEBUG"):
+            client.post(
+                "/render",
+                data={
+                    "template_source": template_source,
+                    "S_username": "unique-username-value",
+                    "N_user_age": "34",
+                    "B_admin": "y",
+                    "S_admin_name": "unique-admin-value",
+                    "P_admin_pass": "unique-password-value",
+                    "R_color": "blue",
+                    "submit": "Render template",
+                },
+            )
+        for value in ("unique-username-value", "unique-admin-value", "unique-password-value"):
+            assert value not in caplog.text
+        # The names are what the logs are for, so they should still be there.
+        assert "S_username" in caplog.text
+
     def test_password_values_never_appear_in_logs(self, client, caplog):
         template_source = self._parse(client, template="{{ P_password }}")
         with caplog.at_level("INFO"):
