@@ -78,23 +78,22 @@ podman run --rm -p 8000:8000 \
   localhost/dynaform:latest
 ```
 
-The first page then offers two sources side by side -- **Choose a template**, the directory
-listing, and **Upload a file** -- above the **Template text** editor that both of them fill.
-Whatever is in that editor when you press **Parse template** is what gets parsed.
+The first page then offers two sources side by side: **Choose a template**, the directory
+listing, and **Upload a file**, above the **Template text** editor that both of them fill.
+Whatever is in that editor when you press **Parse template** is what gets sent to the server
+and parsed.
 
 Choosing a template copies its text into the editor so you can read it and change it before
-going on to the form. Those edits live in that browser page and in the request that follows it:
-**the file on disk is never written to**, and the next visitor gets the original again. Mounting
-the directory read-only (`:ro` above) makes that a property of the container, not just of the
-code.
+continuing to the form. Those edits are not saved to the file, they are entirely temporary for
+this request.
 
-What gets listed:
+What gets listed from the directory:
 
-- Files ending in `.j2` or `.txt`, including ones in subdirectories — a subdirectory shows up as
+- Files ending in `.j2` or `.txt`, including ones in subdirectories. A subdirectory shows up as
   part of the name (`linux/sshd.j2`).
-- Not files or directories whose name starts with `.`, so a stray `.git` directory stays out of
+- No files or directories whose name starts with `.`, so a stray `.git` directory stays out of
   the list.
-- Not files bigger than `TEMPLATE_MAX_BYTES` (64 KB by default), because a chosen template
+- No files bigger than `TEMPLATE_MAX_BYTES` (64 KB by default), because a chosen template
   travels back to the server in the editor on the next request.
 - A symlink is followed only if it lands inside the directory; one pointing at `/etc/passwd` is
   ignored, and a symlinked subdirectory is not descended into.
@@ -176,7 +175,7 @@ Build the image:
 podman build -t dynaform:latest .
 ```
 
-The image is `python:3.12-slim`, runs as a non-root user, and has Bootstrap 5 baked in, so nothing
+The container runs as a non-root user, and has Bootstrap 5 baked in, so nothing
 is fetched from a CDN at runtime.
 
 ### With plain podman
@@ -235,9 +234,9 @@ than yours, and that the unit holds your key, so keep it readable only by root (
 
 #### Pinning a version
 
-`Image=` tracks `ghcr.io/0uwl/dynaform:latest`, which moves to each new full release (a
-pre-release never moves it). A `systemctl --user restart` after a `podman pull` therefore picks up
-whatever shipped since. To decide when that happens, replace the tag with the version you want:
+`Image=` tracks `ghcr.io/0uwl/dynaform:latest`, which moves to each new full release. 
+A `systemctl --user restart` after a `podman pull` therefore picks up the latest release if a new one has 
+been released. To have more control over the version, replace the tag with the version you want:
 
 ```ini
 Image=ghcr.io/0uwl/dynaform:1.4.0
@@ -246,9 +245,9 @@ Image=ghcr.io/0uwl/dynaform:1.4.0
 `:1.4` works too, and follows patch releases within that minor. The tags a release publishes are
 listed under [Cutting a release](#cutting-a-release).
 
-#### Keeping the key out of the unit file
+#### Keeping the secret key out of the unit file
 
-A key in the unit is fine for a host you are the only user of. It is worth knowing where it ends 
+A secret key in the unit is fine for a host you are the only user of. It is worth knowing where it ends 
 up, though: Quadlet turns `Environment=` into an `--env` argument on the generated `podman run` 
 command line, so it is visible to anyone who can read the unit, run `systemctl --user cat dynaform`, 
 or catch the process in `ps`, and it travels with the file into backups.
