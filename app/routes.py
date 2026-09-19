@@ -48,7 +48,7 @@ def library_template():
 def parse():
     form = UploadForm()
     if not form.validate_on_submit():
-        current_app.logger.error("Form was not valid")
+        current_app.logger.warning("Form was not valid")
         return render_template("index.html", form=form), 400
 
     if form.load.data:
@@ -82,12 +82,12 @@ def parse():
     try:
         parsed = parse_template(source)
     except TemplateValidationError as exc:
-        current_app.logger.error(f"Template rejected: {exc}")
+        current_app.logger.warning(f"Template rejected: {exc}")
         flash(str(exc), "danger")
         return render_template("index.html", form=UploadForm()), 400
 
     if not parsed.fields and not parsed.radio_groups:
-        current_app.logger.error("Template does not contain any valid variables")
+        current_app.logger.warning("Template does not contain any valid variables")
         flash("Template has no DynaForm variables (S_/P_/N_/B_/R_) to fill in.", "warning")
         return render_template("index.html", form=UploadForm()), 400
 
@@ -104,13 +104,13 @@ def _load_into_editor(form: UploadForm):
     """
     name = form.template_choice.data or ""
     if not name:
-        current_app.logger.error("No template was received")
+        current_app.logger.warning("No template was received")
         flash("Choose a template to load first.", "warning")
         return render_template("index.html", form=form), 400
 
     source = read_template(name)
     if source is None:
-        current_app.logger.error(f"Directory template not found: {name}")
+        current_app.logger.warning(f"Directory template not found: {name}")
         flash("That template is no longer available.", "danger")
         # Redisplay the submitted form rather than a fresh one so anything
         # already typed into the editor survives the failed load.
@@ -125,45 +125,47 @@ def _load_into_editor(form: UploadForm):
 def render():
     source = request.form.get("template_source", "")
     if not source:
-        current_app.logger.error("No source in the request, session has expired")
+        current_app.logger.warning("No source in the request, session has expired")
         flash("Session expired, please submit the template again.", "danger")
         return render_template("index.html", form=UploadForm()), 400
 
     try:
         parsed = parse_template(source)
     except TemplateValidationError as exc:
-        current_app.logger.error(f"Re-validation failed on render: {exc}")
+        current_app.logger.warning(f"Re-validation failed on render: {exc}")
         flash(str(exc), "danger")
         return render_template("index.html", form=UploadForm()), 400
 
     dynamic_form = build_dynamic_form(parsed)()
     if not dynamic_form.validate_on_submit():
-        current_app.logger.error("Submitted form failed validation")
+        current_app.logger.warning("Submitted form failed validation")
         return render_template("form.html", form=dynamic_form, items=_ordered_items(parsed)), 400
 
     current_app.logger.info("Retrieving data from dynamic form")
     context = {}
     for spec in parsed.fields:
         value = getattr(dynamic_form, spec.var_name).data
-        
-        # Never print password field values to log
-        if spec.prefix != "P":
-            current_app.logger.debug(f"  Retrieved value for variable '{spec.var_name}': {value}")
-    
+        # Names only. Which fields were filled in is enough to follow the
+        # mapping; the values belong to whoever typed them, and S_api_token is
+        # no less sensitive than P_password -- the prefix does not say which.
+        current_app.logger.debug(f"  Retrieved a value for variable '{spec.var_name}'")
         if value is None:
             value = False if spec.prefix == "B" else ""
         context[spec.var_name] = value
 
     for group in parsed.radio_groups:
         selected = getattr(dynamic_form, "R_" + group.name).data
-        current_app.logger.debug(f"  Selected value from group '{group.name}': {selected}")
+        current_app.logger.debug(f"  Read the selection from group '{group.name}'")
         for option, _label in group.options:
             context[f"R_{group.name}_{option}"] = option == selected
 
     try:
         output = _RENDER_ENV.from_string(source).render(**context)
     except (SecurityError, UndefinedError, TemplateError) as exc:
-        current_app.logger.error(f"Render failed: {exc}")
+        if isinstance(exc, SecurityError):
+            current_app.logger.error(f"Sandbox blocked the template: {exc}")
+        else:
+            current_app.logger.warning(f"Render failed: {exc}")
         flash(f"Rendering failed: {exc}", "danger")
         return render_template("form.html", form=dynamic_form, items=_ordered_items(parsed)), 400
 
