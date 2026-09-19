@@ -48,7 +48,7 @@ def library_template():
 def parse():
     form = UploadForm()
     if not form.validate_on_submit():
-        current_app.logger.error("Form was not falid")
+        current_app.logger.error("Form was not valid")
         return render_template("index.html", form=form), 400
 
     if form.load.data:
@@ -63,8 +63,16 @@ def parse():
         current_app.logger.info("Loading content from text area")
         source = form.template_text.data
     elif form.template_choice.data:
+        # template_choice holds the template's *name*; the contents have to be
+        # read off disk. This is how "choose, then parse" works with scripting
+        # unavailable.
         current_app.logger.info("Loading content from selected template")
-        source = form.template_choice.data
+        source = read_template(form.template_choice.data) or ""
+    else:
+        # Nothing uploaded, typed or picked. Without this branch `source` is
+        # never bound and the check below raises UnboundLocalError -- a 500
+        # where the user should get the flash message.
+        source = ""
 
     if not source.strip():
         current_app.logger.info("Empty or incorrect content was sent")
@@ -96,7 +104,7 @@ def _load_into_editor(form: UploadForm):
     """
     name = form.template_choice.data or ""
     if not name:
-        current_app.logger.error("No template was recieved")
+        current_app.logger.error("No template was received")
         flash("Choose a template to load first.", "warning")
         return render_template("index.html", form=form), 400
 
