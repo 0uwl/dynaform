@@ -16,10 +16,18 @@ Environment=GUNICORN_WORKERS=2
 # with `openssl rand -base64 32` and paste it after the `=`. To keep it out of
 # this file, the README describes handing it to Podman as a secret instead.
 Environment=SECRET_KEY=
-# Host directory of ready-made .j2 templates, listed in the picker on the first
-# page. Read-only: DynaForm never writes to it. Adjust the host path to taste;
-# drop ":Z" on systems without SELinux.
-Volume=%h/.local/share/dynaform/templates:/templates:ro,Z
+# Opt-in: a host directory of ready-made .j2 templates, listed in the picker on
+# the first page. Read-only -- DynaForm never writes to it.
+#
+# Commented out because Podman does not create the source of a bind mount for a
+# Quadlet unit: point this at a directory that does not exist and the service
+# fails to start rather than starting without the picker. To turn it on, make
+# the directory first and then uncomment the line:
+#
+#     mkdir -p ~/.local/share/dynaform/templates
+#
+# Adjust the host path to taste; drop ":Z" on systems without SELinux.
+#Volume=%h/.local/share/dynaform/templates:/templates:ro,Z
 
 [Service]
 Restart=on-failure

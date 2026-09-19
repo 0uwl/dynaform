@@ -69,7 +69,9 @@ Ticking **Admin** unfolds the "Admin name" and "Admin pass" inputs.
 
 Point `TEMPLATE_DIR` at a directory of ready-made templates and DynaForm lists them in a picker
 at the top of the first page. The container image sets `TEMPLATE_DIR=/templates` already, so all
-you have to do is bind-mount a host directory there:
+you have to do is bind-mount a host directory there. The directory has to exist before the
+container starts — `podman run` creates a missing one, but the Quadlet unit does not, which is why
+its `Volume=` line ships commented out:
 
 ```bash
 podman run --rm -p 8000:8000 \
@@ -225,8 +227,20 @@ systemctl --user start dynaform
 ```
 
 The service won't come up without the `SECRET_KEY`. `journalctl --user -u dynaform` will have these same
-instructions. The template directory needs nothing, an empty directory just means the picker has nothing to
-list.
+instructions.
+
+The template picker is off by default: the unit's `Volume=` line is commented out. Podman doesn't
+create the source of a bind mount for a Quadlet unit, so a line pointing at a directory that isn't
+there stops the service from starting rather than just leaving the picker empty. To turn it on,
+make the directory first, then uncomment the line and restart:
+
+```bash
+mkdir -p ~/.local/share/dynaform/templates
+systemctl --user daemon-reload
+systemctl --user restart dynaform
+```
+
+An empty directory is fine once it exists — it just means the picker has nothing to list.
 
 For a system-wide service, copy the unit to `/etc/containers/systemd/` instead and drop `--user` from the
 `systemctl` commands. Note that `%h` in the `Volume=` line then resolves to root's home rather
