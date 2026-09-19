@@ -1,4 +1,5 @@
 """Integration tests for the HTTP routes: parse -> dynamic form -> render."""
+import html
 import io
 import re
 
@@ -11,9 +12,10 @@ Color: {{ R_color_red }}{{ R_color_blue }}{{ R_color_green }}
 """
 
 
-def _extract(html, name):
-    match = re.search(rf'name="{name}"[^>]*value="([^"]*)"', html)
-    return match.group(1) if match else None
+def _extract(markup, name):
+    match = re.search(rf'name="{name}"[^>]*value="([^"]*)"', markup)
+    # The browser turns &quot; back into " before posting it; so must this.
+    return html.unescape(match.group(1)) if match else None
 
 
 class TestIndex:
@@ -444,3 +446,244 @@ class TestUploadPreview:
         html = resp.data.decode()
         assert 'name="S_username"' in html
         assert 'name="S_edited"' not in html
+
+
+DEFAULTS_TEMPLATE = """\
+Hello {{ S_username | default("John Doe") }}, age {{ N_user_age | default(45) }}.
+Secret: {{ P_token | default("from-template") }}
+{% if B_admin | default(true) %}admin{% endif %}
+Color: {% if R_color_red %}red{% elif R_color_blue %}blue{% endif %}
+"""
+
+
+class TestTemplateDefaults:
+    def _parse(self, client, template=DEFAULTS_TEMPLATE):
+        resp = client.post("/", data={"template_text": template, "submit": "Parse template"})
+        assert resp.status_code == 200
+        return resp, _extract(resp.data.decode(), "template_source")
+
+    def test_defaults_are_prefilled_into_the_form(self, client):
+        html = self._parse(client)[0].data.decode()
+        assert re.search(r'name="S_username"[^>]*value="John Doe"', html)
+        assert re.search(r'name="N_user_age"[^>]*value="45"', html)
+
+    def test_a_checkbox_default_starts_the_box_ticked(self, client):
+        html = self._parse(client)[0].data.decode()
+        assert re.search(r'<input[^>]*name="B_admin"[^>]*checked|checked[^>]*name="B_admin"', html)
+
+    def test_a_password_default_never_reaches_the_input(self, client):
+        # WTForms does not render a password value, so the default prefills
+        # without the markup carrying it in the field.
+        html = self._parse(client)[0].data.decode()
+        assert re.search(r'name="P_token"[^>]*value=""', html)
+        assert "The template sets a default for this field" in html
+
+    def test_blank_defaulted_field_renders_the_template_default(self, client):
+        _, template_source = self._parse(client)
+        resp = client.post(
+            "/render",
+            data={
+                "template_source": template_source,
+                "S_username": "",
+                "N_user_age": "",
+                "P_token": "",
+                "B_admin": "y",
+                "R_color": "red",
+                "submit": "Render template",
+            },
+        )
+        assert resp.status_code == 200
+        out = resp.data.decode()
+        assert "Hello John Doe, age 45." in out
+        assert "Secret: from-template" in out
+
+    def test_a_submitted_value_beats_the_default(self, client):
+        _, template_source = self._parse(client)
+        resp = client.post(
+            "/render",
+            data={
+                "template_source": template_source,
+                "S_username": "Alice",
+                "N_user_age": "30",
+                "P_token": "typed-in",
+                "B_admin": "y",
+                "R_color": "red",
+                "submit": "Render template",
+            },
+        )
+        out = resp.data.decode()
+        assert "Hello Alice, age 30." in out
+        assert "Secret: typed-in" in out
+
+    def test_a_defaulted_field_may_be_left_blank(self, client):
+        # Without a default this field is InputRequired; with one, blank is
+        # how you ask for the default, so it must validate.
+        _, template_source = self._parse(client)
+        resp = client.post(
+            "/render",
+            data={"template_source": template_source, "R_color": "red", "submit": "Render template"},
+        )
+        assert resp.status_code == 200
+
+    def test_an_undefaulted_field_is_still_required(self, client):
+        resp = client.post(
+            "/", data={"template_text": "{{ S_plain }}", "submit": "Parse template"}
+        )
+        template_source = _extract(resp.data.decode(), "template_source")
+        resp = client.post(
+            "/render",
+            data={"template_source": template_source, "S_plain": "", "submit": "Render template"},
+        )
+        assert resp.status_code == 400
+        assert b"invalid-feedback" in resp.data
+
+    def test_unticking_a_defaulted_checkbox_turns_it_off(self, client):
+        # The trap: omitting an unchecked box from the context would let
+        # default(true) tick it back on, with no way to turn it off.
+        _, template_source = self._parse(client)
+        resp = client.post(
+            "/render",
+            data={
+                "template_source": template_source,
+                "S_username": "Alice",
+                "N_user_age": "30",
+                "P_token": "x",
+                "R_color": "red",
+                "submit": "Render template",
+            },
+        )
+        assert resp.status_code == 200
+        assert "admin" not in resp.data.decode()
+
+    def test_a_default_a_number_field_cannot_hold_does_not_crash(self, client):
+        # `default("forty")` on an N_ field: nothing to prefill, but building
+        # the form must not fall over. Jinja still applies it at render time,
+        # which is the template author's business, not a reason to 500 here.
+        resp = client.post(
+            "/", data={"template_text": '{{ N_age | default("forty") }}', "submit": "Parse template"}
+        )
+        assert resp.status_code == 200
+        assert re.search(r'name="N_age"[^>]*value=""', resp.data.decode())
+
+    def test_a_quote_in_a_default_is_escaped(self, client):
+        template = "{{ S_x | default('He said \"hi\"') }}"
+        resp = client.post("/", data={"template_text": template, "submit": "Parse template"})
+        html_out = resp.data.decode()
+        assert 'value="He said &#34;hi&#34;"' in html_out
+
+    def test_a_radio_default_preselects_that_option(self, client):
+        template = "{{ R_color_red }}{{ R_color_blue | default(true) }}"
+        html = self._parse(client, template)[0].data.decode()
+        assert re.search(r'<input[^>]*value="blue"[^>]*checked|checked[^>]*value="blue"', html)
+
+    def test_a_non_literal_default_is_resolved_by_jinja(self, client):
+        # The form cannot show `default(S_name)`, but the field still has a
+        # default: it may be left blank, and Jinja resolves it at render time.
+        template = "{{ S_name }}/{{ S_ref | default(S_name) }}"
+        _, template_source = self._parse(client, template)
+        resp = client.post(
+            "/render",
+            data={
+                "template_source": template_source,
+                "S_name": "Alice",
+                "S_ref": "",
+                "submit": "Render template",
+            },
+        )
+        assert resp.status_code == 200
+        assert "Alice/Alice" in resp.data.decode()
+
+
+class TestRenderFailuresStayOnTheForm:
+    """A template can raise anything; none of it is the service's fault."""
+
+    def _render(self, client, template, **fields):
+        resp = client.post("/", data={"template_text": template, "submit": "Parse template"})
+        assert resp.status_code == 200, "template should parse"
+        source = _extract(resp.data.decode(), "template_source")
+        return client.post(
+            "/render",
+            data={"template_source": source, "submit": "Render template", **fields},
+        )
+
+    def test_include_is_refused_in_words(self, client):
+        # No loader at all raises TypeError("no loader for this environment
+        # specified"), which used to escape as a 500 and told the author
+        # nothing.
+        resp = self._render(client, '{% include "other.j2" %}{{ S_x }}', S_x="a")
+        assert resp.status_code == 400
+        body = resp.data.decode()
+        assert "Rendering failed" in body
+        assert "no others to include" in body
+
+    def test_import_is_refused_the_same_way(self, client):
+        resp = self._render(client, '{% import "m.j2" as m %}{{ S_x }}', S_x="a")
+        assert resp.status_code == 400
+        assert "Rendering failed" in resp.data.decode()
+
+    def test_a_template_that_divides_by_zero_is_a_400(self, client):
+        resp = self._render(client, "{{ 1 / 0 }}{{ S_x }}", S_x="a")
+        assert resp.status_code == 400
+        assert b"Rendering failed" in resp.data
+
+    def test_arithmetic_on_a_field_left_blank_is_a_400(self, client):
+        # Reachable without trying: a conditional child is optional, so N_
+        # arrives as "" and any arithmetic on it raises TypeError.
+        template = "{% if B_opt %}{{ N_opt_count + 1 }}{% endif %}{{ S_x }}"
+        resp = self._render(client, template, S_x="a", B_opt="y")
+        assert resp.status_code == 400
+        assert b"Rendering failed" in resp.data
+
+    def test_the_sandbox_refusal_still_comes_through(self, client):
+        # Reaching one attribute deep yields an unsafe-undefined that prints
+        # as empty; it is traversing further that the sandbox refuses.
+        resp = self._render(client, "{{ S_x.__class__.__init__.__globals__ }}", S_x="a")
+        assert resp.status_code == 400
+        assert b"Rendering failed" in resp.data
+
+    def test_a_working_template_is_unaffected(self, client):
+        resp = self._render(client, "ok {{ S_x }}", S_x="value")
+        assert resp.status_code == 200
+        assert b"ok value" in resp.data
+
+    def test_raw_keeps_another_system_s_variables_literal(self, client):
+        # The documented escape hatch for templates borrowed from Ansible,
+        # Helm and friends.
+        template = "{% raw %}{{ ansible_hostname }}{% endraw %} in {{ S_env }}"
+        resp = self._render(client, template, S_env="prod")
+        assert resp.status_code == 200
+        assert "{{ ansible_hostname }} in prod" in resp.data.decode()
+
+
+class TestOwnJinjaLogic:
+    """Logic that declares its own variables needs no DynaForm prefix."""
+
+    def _parse(self, client, template):
+        return client.post("/", data={"template_text": template, "submit": "Parse template"})
+
+    def test_set_declared_variable_is_not_a_field(self, client):
+        resp = self._parse(client, '{% set greeting = "hi" %}{{ greeting }}{{ S_name }}')
+        assert resp.status_code == 200
+        html_out = resp.data.decode()
+        assert 'name="S_name"' in html_out
+        assert 'name="greeting"' not in html_out
+
+    def test_loop_variables_are_not_fields(self, client):
+        resp = self._parse(client, "{% for item in [1, 2] %}{{ item }}{% endfor %}{{ S_name }}")
+        assert resp.status_code == 200
+        assert b'name="item"' not in resp.data
+
+    def test_jinja_globals_are_not_fields(self, client):
+        resp = self._parse(client, "{% for i in range(3) %}{{ i }}{% endfor %}{{ S_name }}")
+        assert resp.status_code == 200
+        assert b'name="range"' not in resp.data
+
+    def test_a_macro_is_not_a_field(self, client):
+        template = "{% macro kv(k, v) %}{{ k }}={{ v }}{% endmacro %}{{ kv('h', S_name) }}"
+        assert self._parse(client, template).status_code == 200
+
+    def test_an_undefined_variable_is_still_refused(self, client):
+        # This is the check that catches a forgotten prefix, so it stays.
+        resp = self._parse(client, "{{ mystery }}{{ S_name }}")
+        assert resp.status_code == 400
+        assert b"Unrecognized variable" in resp.data

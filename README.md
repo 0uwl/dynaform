@@ -37,6 +37,60 @@ Labels are derived from the name: the prefix is dropped, underscores become spac
 first word is capitalized (`N_user_age` -> "User age"). Fields appear in the order the variables
 first occur in the template source.
 
+### Your own Jinja logic
+
+The prefix rule applies only to variables the template *doesn't define itself*. Anything Jinja
+declares as it goes — `{% set %}`, loop variables, macro arguments, `{% with %}` — needs no prefix
+and never becomes a form field. So does Jinja's own furniture: `range()`, `namespace()`, `dict()`,
+`loop.index`, every filter and test.
+
+That means ordinary templating works as you'd expect, with the form asking only for the
+`S_`/`P_`/`N_`/`B_`/`R_` variables:
+
+```jinja
+{% set scheme = "https" if B_tls else "http" %}
+upstream {{ S_service }} {
+{% for port in [8080, 8443] %}
+    server {{ S_host }}:{{ port }};
+{% endfor %}
+}
+listen {{ scheme }}://{{ S_host }};
+```
+
+`scheme` and `port` are the template's own. The form asks for **Service**, **Host** and **Tls**.
+
+One thing is refused: a variable that is never defined anywhere and carries no prefix.
+
+```jinja
+Hello {{ username }}
+```
+
+> Unrecognized variable name(s): username. Every variable must start with S_, P_, N_, B_, or R_.
+
+That is deliberate — it's the check that catches a forgotten prefix, which would otherwise leave
+you with a form missing a field and output with a silent blank in it. Either prefix the name so it
+becomes a field (`S_username`), or define it in the template with `{% set %}`.
+
+#### Templates from other systems
+
+Variables belonging to something else — Ansible, Helm, a CI system — would be consumed by this
+render and come out empty. Wrap them in `{% raw %}` to pass them through untouched:
+
+```jinja
+server {{ S_host }}
+inventory {% raw %}{{ ansible_hostname }}{% endraw %}
+```
+
+renders as `server example.com` and `inventory {{ ansible_hostname }}`, leaving the second
+template's variables for the second template's renderer.
+
+#### What isn't available
+
+`{% include %}`, `{% import %}` and `{% extends %}` don't work: DynaForm renders one template on
+its own, and there is no template directory for them to reach into — which is also what stops a
+template reading files off the host. Using them fails the render with a message saying so, rather
+than producing anything.
+
 ### Radio groups
 
 Radio variables are named `R_<group>_<option>`. The group name is the single word right after
@@ -64,6 +118,67 @@ Admin: {{ S_admin_name }} / {{ P_admin_pass }}
 ```
 
 Ticking **Admin** unfolds the "Admin name" and "Admin pass" inputs.
+
+### Default values
+
+Give a variable a default with Jinja's own [`default`
+filter](https://jinja.palletsprojects.com/en/stable/templates/#jinja-filters.default) (or its
+`d` alias). There is no second file and no DynaForm-specific syntax — the template stays an
+ordinary Jinja template, and renders the same way outside DynaForm:
+
+```jinja
+Hello {{ S_username | default("John Doe") }}, you are {{ N_user_age | default(45) }}.
+```
+
+The form arrives with those values already in the boxes. Edit them, or leave them as they are.
+Clear one and submit, and the default is what gets rendered — DynaForm leaves the variable
+undefined and lets the filter do its job, so the value you get is exactly the one the template
+says, `default(x, true)` included.
+
+**A default makes the field optional.** It has to: submitting the field blank is how you ask for
+the default, so it can't also be required. Nothing in the template says so out loud, which is why
+it is written down here — adding a default to tidy up a form also stops that field being
+mandatory.
+
+A few specifics:
+
+- **Checkboxes and radios start in that state rather than falling back to it.**
+  `{{ B_admin | default(true) }}` ships the box ticked; `{{ R_color_blue | default(true) }}`
+  preselects Blue. They can't work as fallbacks: an unchecked box submits nothing at all, so a
+  fallback would tick it straight back on and leave no way to turn it off.
+- **The first default for a variable wins** in the form. Writing two is a slip, and a form can
+  only show one. (Jinja applies each one where it stands, so such a template renders both.)
+- **Only literals can be shown.** `{{ S_ref | default(S_name) }}` still makes the field optional
+  and Jinja still resolves it at render time, but the form has nothing to prefill — it cannot know
+  the value before rendering, and guessing would be worse than showing nothing.
+- **The default applies where the filter is, not everywhere.** Leave a defaulted field blank and
+  `{{ S_x | default("John") }}` renders `John`, while a bare `{{ S_x }}` elsewhere in the same
+  template renders empty — the variable is undefined and only the filter fills it in. Repeat the
+  filter, or fill the field in, if you use the variable more than once.
+
+#### Defaults on password fields
+
+You can default a `P_` field, and it works like any other. Be aware of where the value ends up:
+
+```jinja
+{{ P_token | default("from-template") }}
+```
+
+The password input itself never carries it — WTForms doesn't render a password's value, so the
+box shows up empty with a note that a default is set. **But the default lives in the template
+text, and the template text is on the page**: in the editor on the first page, and in the hidden
+field that carries the source to the second. So the value appears in the HTML of both pages, in
+browser history, and anywhere that caches them. DynaForm also has no authentication, so anyone who
+can reach it can read the template and its defaults.
+
+That is fine for a shared team value or a throwaway credential. It is not fine for anything you
+would have to rotate if it leaked — type those in instead.
+
+#### If you already use `default`
+
+Before this existed, `default` in a DynaForm template did nothing: every variable was passed to
+the renderer whether or not its field was filled in, and the filter only fires on variables that
+are *undefined*. Such templates now behave as they read. Worth a look if you have any.
 
 ## Template directory
 
@@ -420,6 +535,63 @@ dynaform.container      Quadlet unit
 dynaform.md             original design note
 plan.md                 implementation plan and rationale
 ```
+
+## Ideas for later
+
+Neither of these is committed to or designed; they are written down so the reasoning survives.
+
+### Including other templates from the directory
+
+`{% include %}` is refused today, and the reason is not arbitrary: the render environment has no
+loader, which is precisely what stops a template reading files off the host. A loader scoped to
+`TEMPLATE_DIR` would change that answer from "never" to "only from the directory the operator
+mounted" — and that directory is already fully readable through the picker, so it grants no
+reach that a visitor does not already have. Reusable partials (a shared header, a common block
+repeated across templates) look worth it.
+
+The obstacle is not the loader, it is the two-request model. Today the template travels as *text*
+in a hidden field, and `/render` re-parses exactly what the form was built from. An include is a
+second file, resolved from disk at render time, which means:
+
+- **The form must know about it at parse time.** `find_undeclared_variables` only looks at the
+  template it is given, so an include's variables would not become fields unless the parser
+  follows includes itself. `jinja2.meta.find_referenced_templates` gives the names to follow, and
+  returns `None` for a name it cannot resolve statically (`{% include S_choice %}`) — those would
+  have to be refused, or the form would be missing fields it cannot know about.
+- **The two requests could disagree.** The file could change, or be deleted, between building the
+  form and rendering it. The template text is carried precisely so that cannot happen; an include
+  reintroduces it.
+- **Edited and pasted templates need an answer.** A template typed into the editor could name an
+  include that only exists if a directory is mounted at all.
+- **Any loader must reuse the containment checks in `template_library.py`** — resolve, confirm the
+  path stays inside the root, apply the size cap, skip dotfiles — rather than joining a name onto
+  a path itself. That scan is where the safety currently lives.
+
+A smaller version worth weighing first: resolve includes at *parse* time by splicing the included
+text into the source before it is carried to the form. Reuse without a loader, at the cost of an
+include being a snapshot rather than a live reference.
+
+### An `L_` prefix for repeatable elements
+
+A list of things — server names, users, ports — where one form field is not enough and the
+template wants to loop:
+
+```jinja
+{% for server in L_servers %}
+    server {{ server }};
+{% endfor %}
+```
+
+Deferred rather than designed. The questions to answer when it comes back:
+
+- **What is an element?** A list of plain strings is a much smaller feature than a list of records
+  with their own sub-fields, which needs nested field specs and nested labels.
+- **How does the parser know?** `L_servers` is iterated, not printed, so the prefix has to be
+  taught to `_NAME_RE` and `FIELD_CLASSES`, and the "every variable is one input" assumption in
+  the form builder stops holding.
+- **How does it look without JavaScript?** Adding and removing rows wants scripting, and this app
+  has kept every feature working without it. WTForms' `FieldList`/`FormField` already map onto the
+  flat `L_servers-0`, `L_servers-1` encoding, so the server side is the easy half.
 
 ## Contributing
 
