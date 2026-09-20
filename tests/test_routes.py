@@ -658,6 +658,104 @@ class TestRenderFailuresStayOnTheForm:
         assert "{{ ansible_hostname }} in prod" in resp.data.decode()
 
 
+class TestTemplateReuseEndToEnd:
+    """extends/include/import against a real TEMPLATE_DIR, parse through render."""
+
+    CHILD = (
+        '{% extends "base.j2" %}'
+        "{% block servers %}"
+        '{% include "_header.j2" %}'
+        "server {{ S_host }}:{{ N_port }};"
+        "{% endblock %}"
+    )
+
+    def _parse(self, client, library, template=None):
+        (library / "base.j2").write_text(
+            "upstream {{ S_service }} {\n{% block servers %}{% endblock %}\n}\n"
+        )
+        (library / "_header.j2").write_text("# managed by dynaform\n")
+        resp = client.post(
+            "/",
+            data={"template_text": template or self.CHILD, "submit": "Parse template"},
+        )
+        return resp, _extract(resp.data.decode(), "template_source")
+
+    def test_fields_from_base_and_child_are_both_collected(self, client, library):
+        resp, _source = self._parse(client, library)
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert 'name="S_service"' in html
+        assert 'name="S_host"' in html
+        assert 'name="N_port"' in html
+
+    def test_render_combines_base_partial_and_child(self, client, library):
+        _resp, source = self._parse(client, library)
+        resp = client.post(
+            "/render",
+            data={
+                "template_source": source,
+                "S_service": "web",
+                "S_host": "10.0.0.1",
+                "N_port": "8080",
+                "submit": "Render template",
+            },
+        )
+        assert resp.status_code == 200
+        out = resp.data.decode()
+        assert "upstream web {" in out
+        assert "# managed by dynaform" in out
+        assert "server 10.0.0.1:8080;" in out
+
+    def test_base_removed_between_parse_and_render_is_refused(self, client, library):
+        _resp, source = self._parse(client, library)
+        (library / "base.j2").unlink()
+        resp = client.post(
+            "/render",
+            data={
+                "template_source": source,
+                "S_service": "web",
+                "S_host": "10.0.0.1",
+                "N_port": "8080",
+                "submit": "Render template",
+            },
+        )
+        assert resp.status_code == 400
+        assert b"base.j2" in resp.data
+
+    def test_dynamic_include_name_is_refused(self, client, library):
+        resp = client.post(
+            "/",
+            data={"template_text": "{% include S_choice %}", "submit": "Parse template"},
+        )
+        assert resp.status_code == 400
+        assert b"dynamic" in resp.data
+
+    def test_a_cycle_is_refused(self, client, library):
+        (library / "a.j2").write_text('{% extends "b.j2" %}')
+        (library / "b.j2").write_text('{% extends "a.j2" %}')
+        resp = client.post(
+            "/", data={"template_text": '{% extends "a.j2" %}', "submit": "Parse template"}
+        )
+        assert resp.status_code == 400
+        assert b"cycle" in resp.data
+
+    def test_underscore_partial_is_usable_though_not_in_the_picker_value(self, client, library):
+        # The picker keeps _-prefixed names out of the <select> (see
+        # TestTemplateLibrary); the loader still serves them by name, which is
+        # what the render above already exercises end to end.
+        (library / "base.j2").write_text("x")
+        (library / "_only_via_include.j2").write_text("{{ S_x }}")
+        resp = client.post(
+            "/",
+            data={
+                "template_text": '{% include "_only_via_include.j2" %}',
+                "submit": "Parse template",
+            },
+        )
+        assert resp.status_code == 200
+        assert b'name="S_x"' in resp.data
+
+
 class TestOwnJinjaLogic:
     """Logic that declares its own variables needs no DynaForm prefix."""
 
