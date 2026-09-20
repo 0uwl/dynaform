@@ -1,0 +1,17 @@
+{% import "_macros.j2" as macros with context %}
+{{ macros.banner() }}
+[Unit]
+Description={{ S_description }}
+After=network.target
+
+[Service]
+Type=simple
+ExecStart={{ S_exec_start }}
+{{ macros.env_line("PORT", N_port) }}
+{% if B_restart %}
+Restart=on-failure
+RestartSec={{ N_restart_delay | default(5) }}
+{% endif %}
+
+[Install]
+WantedBy=multi-user.target
