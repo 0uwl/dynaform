@@ -135,11 +135,14 @@ A few things are refused, all before anything renders:
   all** — naming what's missing.
 
 That last one matters between the two requests, too: the child's text is carried in the hidden
-field, but `base.j2` and any partials are read fresh at render time — so if one is edited or
-removed after the form was built, the render either fails the same way parsing would, or the set of
-required fields changes enough that submitting the old form fails validation. Either way, nothing
-renders against a base that's since moved out from under it; reload the form and it picks up
-what's there now.
+field, but `base.j2` and any partials are read fresh at render time. If one goes missing, or the
+edit introduces a new required field, rendering is refused the same way parsing would be — a
+vanished reference fails outright, and a newly-required field fails the resubmitted form's own
+validation. An edit that only *removes* a requirement (a field a block no longer reads) is not
+refused: rendering goes ahead against the directory as it is now, and that now-unused value is
+quietly dropped rather than passed to a template that has nowhere left to put it. Either way the
+render reflects what's on disk *now*, never a mix of old and new; reload the form after an edit to
+see the current field list.
 
 A variable inside a template imported `without context` (Jinja's default for `{% import %}`) is
 not fillable from this form — it renders with whatever that template's own scope gives it, so it

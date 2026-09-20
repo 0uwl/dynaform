@@ -336,6 +336,27 @@ class TestTemplateReuse:
         with pytest.raises(TemplateValidationError, match="syntax error"):
             parse_template('{% include "bad.j2" %}', resolve=self._resolve(files))
 
+    def test_a_block_nested_inside_another_block_is_not_lost(self):
+        # A block nested inside another block is its own independently
+        # overridable block (Jinja registers it separately), reached via the
+        # enclosing block's body -- isolating the outer block must not sever
+        # that path when computing the inner block's own effective vars.
+        files = {
+            "base.j2": "{% block outer %}O[{% block inner %}{{ S_inner }}{% endblock %}]{% endblock %}"
+        }
+        parsed = parse_template('{% extends "base.j2" %}', resolve=self._resolve(files))
+        assert {f.var_name for f in parsed.fields} == {"S_inner"}
+
+    def test_nested_block_survives_an_intermediate_super_override(self):
+        files = {
+            "grandparent.j2": (
+                "{% block outer %}GP[{% block inner %}{{ S_gp_inner }}{% endblock %}]{% endblock %}"
+            ),
+            "parent.j2": '{% extends "grandparent.j2" %}{% block outer %}P[{{ super() }}]{% endblock %}',
+        }
+        parsed = parse_template('{% extends "parent.j2" %}', resolve=self._resolve(files))
+        assert {f.var_name for f in parsed.fields} == {"S_gp_inner"}
+
 
 class TestRadioDefaults:
     def test_truthy_default_preselects_that_option(self):

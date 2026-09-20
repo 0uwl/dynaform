@@ -222,20 +222,44 @@ class _RefWalker:
         return pruned
 
     def _isolate_block(self, ast: nodes.Template, name: str) -> nodes.Template:
-        """A copy of `ast` with every block *except* `name` emptied.
+        """A copy of `ast` with every block emptied except `name` and its
+        own ancestor blocks (a block nested inside another one).
 
         Keeping the rest of `ast` intact (its own top-level `{% set %}` /
         `{% import %}` / `{% extends %}`) is what lets ``super()`` and a
         template's own top-level declarations resolve correctly for its own
-        block -- see the class docstring.
+        block -- see the class docstring. Ancestors have to stay too: pruning
+        an enclosing block's body the way a sibling's is pruned would cut the
+        target's own path back to the tree root, losing it entirely.
         """
         isolated = copy.deepcopy(ast)
         isolated.environment = _ENV  # deepcopy would otherwise clone it too
-        keep = next(b for b in isolated.find_all(nodes.Block) if b.name == name)
+        keep = {id(b) for b in self._block_and_ancestors(isolated, name)}
         for block in isolated.find_all(nodes.Block):
-            if block is not keep:
+            if id(block) not in keep:
                 block.body = []
         return isolated
+
+    def _block_and_ancestors(self, ast: nodes.Template, name: str) -> list[nodes.Block]:
+        """The first block named `name`, plus every block that encloses it."""
+        path: list[nodes.Block] = []
+
+        def visit(node: nodes.Node) -> list[nodes.Block] | None:
+            entered = isinstance(node, nodes.Block)
+            if entered:
+                path.append(node)
+                if node.name == name:
+                    return list(path)
+            for child in node.iter_child_nodes():
+                found = visit(child)
+                if found is not None:
+                    return found
+            if entered:
+                path.pop()
+            return None
+
+        found = visit(ast)
+        return found or []
 
     def _declared_names(self, ast: nodes.Template) -> set[str]:
         names = {n.name for n in ast.find_all(nodes.Name) if n.ctx in ("store", "param")}
