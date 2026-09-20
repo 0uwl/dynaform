@@ -607,19 +607,22 @@ class TestRenderFailuresStayOnTheForm:
         )
 
     def test_include_is_refused_in_words(self, client):
-        # No loader at all raises TypeError("no loader for this environment
-        # specified"), which used to escape as a 500 and told the author
-        # nothing.
-        resp = self._render(client, '{% include "other.j2" %}{{ S_x }}', S_x="a")
+        # No TEMPLATE_DIR is configured, so there is nothing to include from
+        # -- refused at parse time now, rather than escaping as a 500 (the
+        # old TypeError("no loader for this environment specified")) or
+        # slipping through to a render-time failure.
+        resp = client.post(
+            "/", data={"template_text": '{% include "other.j2" %}{{ S_x }}', "submit": "Parse template"}
+        )
         assert resp.status_code == 400
-        body = resp.data.decode()
-        assert "Rendering failed" in body
-        assert "no others to include" in body
+        assert b"other.j2" in resp.data
 
     def test_import_is_refused_the_same_way(self, client):
-        resp = self._render(client, '{% import "m.j2" as m %}{{ S_x }}', S_x="a")
+        resp = client.post(
+            "/", data={"template_text": '{% import "m.j2" as m %}{{ S_x }}', "submit": "Parse template"}
+        )
         assert resp.status_code == 400
-        assert "Rendering failed" in resp.data.decode()
+        assert b"m.j2" in resp.data
 
     def test_a_template_that_divides_by_zero_is_a_400(self, client):
         resp = self._render(client, "{{ 1 / 0 }}{{ S_x }}", S_x="a")

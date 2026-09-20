@@ -4,10 +4,18 @@ Syntax (see dynaform.md / plan.md): every undeclared template variable must
 be named ``<PREFIX>_<name>`` where PREFIX is one of S/P/N/B/R (text /
 password / number / checkbox / radio). Radio variables are further named
 ``R_<group>_<option>`` and are grouped into one radio-button set per group.
+
+A template may also reuse others via ``{% extends %}``, ``{% include %}``,
+``{% import %}`` and ``{% from ... import %}``. Resolving *what those refer
+to* is the caller's job (a ``resolve`` callable, so this module stays free of
+Flask); working out *which variables end up on the form* is this module's --
+see ``_RefWalker``.
 """
 from __future__ import annotations
 
+import copy
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from dataclasses import field as dc_field
 
@@ -16,6 +24,13 @@ from jinja2.meta import find_undeclared_variables
 from jinja2.sandbox import SandboxedEnvironment
 
 _ENV = SandboxedEnvironment()
+
+# Provisional -- see HANDOFF.md. Bounds how far a template's reuse graph is
+# walked before parsing refuses rather than following it (or looping) forever.
+MAX_TEMPLATE_DEPTH = 10
+MAX_TEMPLATES_REFERENCED = 50
+
+_REF_NODE_TYPES = (nodes.Include, nodes.Import, nodes.FromImport)
 
 _NAME_RE = re.compile(r"^(?P<prefix>[SPNBR])_(?P<rest>[A-Za-z][A-Za-z0-9_]*)$")
 _RADIO_RE = re.compile(r"^(?P<group>[A-Za-z0-9]+)_(?P<option>[A-Za-z][A-Za-z0-9_]*)$")
@@ -99,7 +114,190 @@ def _first_occurrence(name: str, source: str) -> int:
     return match.start() if match else len(source)
 
 
-def parse_template(source: str) -> ParsedTemplate:
+class _RefWalker:
+    """Walks a template's ``extends``/``include``/``import`` graph for the
+    variables that actually reach the render, the way Jinja itself would.
+
+    Two things Jinja's own ``find_undeclared_variables`` gets wrong for our
+    purposes, both worth the extra code (see HANDOFF.md):
+
+    * A ``{% block %}`` compiles as its own frame, so a name a template
+      declares for itself at the top level (``{% set %}``, ``{% import %}``,
+      a macro) reads as "undeclared" from inside that *same* template's own
+      block -- even though it plainly isn't. ``_declared_names`` and the
+      ``super`` exclusion in ``_effective_block_vars`` correct for that.
+    * A base block a child overrides *without* calling ``super()`` never
+      renders, and a child block absent from the base chain never renders
+      either -- both would otherwise turn into bogus required fields.
+      ``_effective_block_vars`` resolves each block name to whichever
+      definition actually wins, chasing ``super()`` up the chain as needed.
+
+    What it deliberately leaves alone (also in HANDOFF.md, not a gap to
+    close later without a reason): stray output outside a child's blocks --
+    over-collecting a field beats silently dropping one that does render, and
+    a wrong rule here risks the latter; and a child ``{% set %}`` shadowing a
+    name the base reads, which over-collects the same field instead of
+    dropping it -- correct behaviour either way, just a field asked for that
+    the template always supplies itself.
+    """
+
+    def __init__(self, resolve: Callable[[str], str | None] | None):
+        self._resolve = resolve or (lambda _name: None)
+        self._cache: dict[str, nodes.Template] = {}
+
+    def collect(self, ast: nodes.Template, path: tuple[str, ...] = (), depth: int = 0) -> set[str]:
+        chain = self._extends_chain(ast, path, depth)
+        root_block_names = {b.name for b in chain[-1].find_all(nodes.Block)}
+
+        names: set[str] = set()
+        for level, template in enumerate(chain):
+            top = self._without_blocks(template)
+            names |= find_undeclared_variables(top)
+            names |= self._collect_refs(top, path, depth + level)
+
+        for block_name in root_block_names:
+            names |= self._effective_block_vars(chain, block_name, 0, path, depth)
+
+        return names
+
+    def _parse_named(self, name: str, path: tuple[str, ...], depth: int) -> nodes.Template:
+        if name in path:
+            loop = " -> ".join((*path, name))
+            raise TemplateValidationError(f"Template reference cycle: {loop}")
+        if depth > MAX_TEMPLATE_DEPTH:
+            raise TemplateValidationError(
+                f"Templates are nested more than {MAX_TEMPLATE_DEPTH} levels deep."
+            )
+        if name in self._cache:
+            return self._cache[name]
+        if len(self._cache) >= MAX_TEMPLATES_REFERENCED:
+            raise TemplateValidationError(
+                f"More than {MAX_TEMPLATES_REFERENCED} templates are referenced."
+            )
+        source = self._resolve(name)
+        if source is None:
+            raise TemplateValidationError(f"Referenced template not found: {name}")
+        try:
+            ast = _ENV.parse(source)
+        except TemplateSyntaxError as exc:
+            raise TemplateValidationError(
+                f"Template syntax error in '{name}': {exc.message} (line {exc.lineno})"
+            ) from exc
+        self._cache[name] = ast
+        return ast
+
+    def _ref_name(self, template_expr: nodes.Expr, kind: str) -> str:
+        if not isinstance(template_expr, nodes.Const) or not isinstance(template_expr.value, str):
+            raise TemplateValidationError(
+                f"Cannot resolve a dynamic {kind} target; use a literal template name."
+            )
+        return template_expr.value
+
+    def _extends_chain(
+        self, ast: nodes.Template, path: tuple[str, ...], depth: int
+    ) -> list[nodes.Template]:
+        chain = [ast]
+        current, current_path, current_depth = ast, path, depth
+        while True:
+            extends = list(current.find_all(nodes.Extends))
+            if not extends:
+                return chain
+            target = self._ref_name(extends[0].template, "extends")
+            current = self._parse_named(target, current_path, current_depth + 1)
+            current_path = (*current_path, target)
+            current_depth += 1
+            chain.append(current)
+
+    def _without_blocks(self, ast: nodes.Template) -> nodes.Template:
+        """A copy of `ast` with every block's body emptied.
+
+        What's left is exactly the content that isn't behind a (possibly
+        dead) block -- handled instead, correctly, by
+        ``_effective_block_vars``.
+        """
+        pruned = copy.deepcopy(ast)
+        pruned.environment = _ENV  # deepcopy would otherwise clone it too
+        for block in pruned.find_all(nodes.Block):
+            block.body = []
+        return pruned
+
+    def _isolate_block(self, ast: nodes.Template, name: str) -> nodes.Template:
+        """A copy of `ast` with every block *except* `name` emptied.
+
+        Keeping the rest of `ast` intact (its own top-level `{% set %}` /
+        `{% import %}` / `{% extends %}`) is what lets ``super()`` and a
+        template's own top-level declarations resolve correctly for its own
+        block -- see the class docstring.
+        """
+        isolated = copy.deepcopy(ast)
+        isolated.environment = _ENV  # deepcopy would otherwise clone it too
+        keep = next(b for b in isolated.find_all(nodes.Block) if b.name == name)
+        for block in isolated.find_all(nodes.Block):
+            if block is not keep:
+                block.body = []
+        return isolated
+
+    def _declared_names(self, ast: nodes.Template) -> set[str]:
+        names = {n.name for n in ast.find_all(nodes.Name) if n.ctx in ("store", "param")}
+        names |= {n.target for n in ast.find_all(nodes.Import)}
+        for from_import in ast.find_all(nodes.FromImport):
+            names |= {n if isinstance(n, str) else n[1] for n in from_import.names}
+        names |= {n.name for n in ast.find_all(nodes.Macro)}
+        return names
+
+    def _calls_super(self, block: nodes.Block) -> bool:
+        return any(
+            isinstance(call.node, nodes.Name) and call.node.name == "super"
+            for call in block.find_all(nodes.Call)
+        )
+
+    def _collect_refs(
+        self, tree: nodes.Template, path: tuple[str, ...], depth: int
+    ) -> set[str]:
+        names: set[str] = set()
+        for ref in tree.find_all(_REF_NODE_TYPES):
+            kind = "include" if isinstance(ref, nodes.Include) else "import"
+            target = self._ref_name(ref.template, kind)
+            target_ast = self._parse_named(target, path, depth + 1)
+            if ref.with_context:
+                names |= self.collect(target_ast, (*path, target), depth + 1)
+            # else: resolved (so a missing one is still refused) but its
+            # variables are not fillable from this form -- see HANDOFF.md
+            # finding 5, "without context" is isolated from our context.
+        return names
+
+    def _effective_block_vars(
+        self,
+        chain: list[nodes.Template],
+        name: str,
+        start: int,
+        path: tuple[str, ...],
+        depth: int,
+    ) -> set[str]:
+        """Variables for whichever definition of block `name` actually wins.
+
+        Most-derived definition found in `chain` (search starts at `start`,
+        the child end) wins outright, unless it calls ``super()``, in which
+        case the next definition up the chain contributes too -- and may
+        itself call ``super()``, and so on.
+        """
+        for level in range(start, len(chain)):
+            template = chain[level]
+            block = next((b for b in template.find_all(nodes.Block) if b.name == name), None)
+            if block is None:
+                continue
+            isolated = self._isolate_block(template, name)
+            names = find_undeclared_variables(isolated) - {"super"} - self._declared_names(isolated)
+            names |= self._collect_refs(isolated, path, depth + level)
+            if self._calls_super(block):
+                names |= self._effective_block_vars(chain, name, level + 1, path, depth)
+            return names
+        return set()
+
+
+def parse_template(
+    source: str, resolve: Callable[[str], str | None] | None = None
+) -> ParsedTemplate:
     try:
         ast = _ENV.parse(source)
     except TemplateSyntaxError as exc:
@@ -107,7 +305,7 @@ def parse_template(source: str) -> ParsedTemplate:
             f"Template syntax error: {exc.message} (line {exc.lineno})"
         ) from exc
 
-    names = find_undeclared_variables(ast)
+    names = _RefWalker(resolve).collect(ast)
 
     invalid = sorted(n for n in names if not _NAME_RE.match(n))
     if invalid:
