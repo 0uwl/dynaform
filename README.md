@@ -84,12 +84,69 @@ inventory {% raw %}{{ ansible_hostname }}{% endraw %}
 renders as `server example.com` and `inventory {{ ansible_hostname }}`, leaving the second
 template's variables for the second template's renderer.
 
-#### What isn't available
+#### Reusing templates
 
-`{% include %}`, `{% import %}` and `{% extends %}` don't work: DynaForm renders one template on
-its own, and there is no template directory for them to reach into — which is also what stops a
-template reading files off the host. Using them fails the render with a message saying so, rather
-than producing anything.
+With `TEMPLATE_DIR` configured (see [Template directory](#template-directory)), a template can
+pull in others from that same directory with `{% extends %}`, `{% include %}`, `{% import %}` and
+`{% from ... import %}` — ordinary Jinja, resolved against exactly the directory the picker already
+lists in full, so this grants no reach a visitor doesn't already have.
+
+A base template with a block, and a child that fills it in:
+
+```jinja
+{# base.j2 #}
+upstream {{ S_service }} {
+{% block servers %}{% endblock %}
+}
+```
+
+```jinja
+{# child, typed or pasted into the editor #}
+{% extends "base.j2" %}
+{% block servers %}
+{% include "_header.j2" %}
+server {{ S_host }}:{{ N_port }};
+{% endblock %}
+```
+
+The form asks for **Service**, **Host** and **Port** — exactly the variables this render actually
+uses, whichever templates they come from. A base's own block that the child overrides without
+calling `{{ super() }}` never renders, so nothing is asked for it; call `super()` and the base's
+fields join the child's.
+
+Only the **child** goes in the editor and travels in the hidden field between the two requests —
+the same two-request model as ever. Bases and partials stay on disk and are read fresh on every
+request, so an edit to `base.j2` shows up the next time the form is built or the template is
+rendered, no restart needed.
+
+**A file whose name starts with `_` is loadable but left out of the picker** — a listing
+convention for partials meant to be pulled in with `{% include %}`/`{% import %}` rather than
+chosen directly, not a permission boundary: the directory is already fully readable through the
+picker, so a partial being unlisted grants nothing new.
+
+A few things are refused, all before anything renders:
+
+- **A dynamically named reference** (`{% include S_choice %}`) — which template that is can't be
+  known until render, so the form could never know what fields it needs.
+- **A reference cycle** (`a.j2` extending `b.j2` extending `a.j2`) — naming the loop.
+- **Reuse more than 10 templates deep, or touching more than 50 templates** — provisional limits
+  against a runaway or pathological graph.
+- **A referenced template that isn't in the directory**, or **no `TEMPLATE_DIR` configured at
+  all** — naming what's missing.
+
+That last one matters between the two requests, too: the child's text is carried in the hidden
+field, but `base.j2` and any partials are read fresh at render time. If one goes missing, or the
+edit introduces a new required field, rendering is refused the same way parsing would be — a
+vanished reference fails outright, and a newly-required field fails the resubmitted form's own
+validation. An edit that only *removes* a requirement (a field a block no longer reads) is not
+refused: rendering goes ahead against the directory as it is now, and that now-unused value is
+quietly dropped rather than passed to a template that has nowhere left to put it. Either way the
+render reflects what's on disk *now*, never a mix of old and new; reload the form after an edit to
+see the current field list.
+
+A variable inside a template imported `without context` (Jinja's default for `{% import %}`) is
+not fillable from this form — it renders with whatever that template's own scope gives it, so it
+never becomes a field. Add `with context` to change that.
 
 ### Radio groups
 
@@ -538,38 +595,7 @@ plan.md                 implementation plan and rationale
 
 ## Ideas for later
 
-Neither of these is committed to or designed; they are written down so the reasoning survives.
-
-### Including other templates from the directory
-
-`{% include %}` is refused today, and the reason is not arbitrary: the render environment has no
-loader, which is precisely what stops a template reading files off the host. A loader scoped to
-`TEMPLATE_DIR` would change that answer from "never" to "only from the directory the operator
-mounted" — and that directory is already fully readable through the picker, so it grants no
-reach that a visitor does not already have. Reusable partials (a shared header, a common block
-repeated across templates) look worth it.
-
-The obstacle is not the loader, it is the two-request model. Today the template travels as *text*
-in a hidden field, and `/render` re-parses exactly what the form was built from. An include is a
-second file, resolved from disk at render time, which means:
-
-- **The form must know about it at parse time.** `find_undeclared_variables` only looks at the
-  template it is given, so an include's variables would not become fields unless the parser
-  follows includes itself. `jinja2.meta.find_referenced_templates` gives the names to follow, and
-  returns `None` for a name it cannot resolve statically (`{% include S_choice %}`) — those would
-  have to be refused, or the form would be missing fields it cannot know about.
-- **The two requests could disagree.** The file could change, or be deleted, between building the
-  form and rendering it. The template text is carried precisely so that cannot happen; an include
-  reintroduces it.
-- **Edited and pasted templates need an answer.** A template typed into the editor could name an
-  include that only exists if a directory is mounted at all.
-- **Any loader must reuse the containment checks in `template_library.py`** — resolve, confirm the
-  path stays inside the root, apply the size cap, skip dotfiles — rather than joining a name onto
-  a path itself. That scan is where the safety currently lives.
-
-A smaller version worth weighing first: resolve includes at *parse* time by splicing the included
-text into the source before it is carried to the form. Reuse without a loader, at the cost of an
-include being a snapshot rather than a live reference.
+Not committed to or designed; written down so the reasoning survives.
 
 ### An `L_` prefix for repeatable elements
 

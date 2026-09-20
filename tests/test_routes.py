@@ -270,6 +270,13 @@ class TestTemplateLibrary:
         assert 'name="template_choice"' in html
         assert 'value="greeting.j2"' in html
 
+    def test_underscore_prefixed_partial_stays_out_of_the_picker(self, client, library):
+        (library / "greeting.j2").write_text(TEMPLATE)
+        (library / "_header.j2").write_text(TEMPLATE)
+        html = client.get("/").data.decode()
+        assert 'value="greeting.j2"' in html
+        assert 'value="_header.j2"' not in html
+
     def test_empty_directory_shows_no_picker(self, client, library):
         html = client.get("/").data.decode()
         assert 'name="template_choice"' not in html
@@ -607,19 +614,22 @@ class TestRenderFailuresStayOnTheForm:
         )
 
     def test_include_is_refused_in_words(self, client):
-        # No loader at all raises TypeError("no loader for this environment
-        # specified"), which used to escape as a 500 and told the author
-        # nothing.
-        resp = self._render(client, '{% include "other.j2" %}{{ S_x }}', S_x="a")
+        # No TEMPLATE_DIR is configured, so there is nothing to include from
+        # -- refused at parse time now, rather than escaping as a 500 (the
+        # old TypeError("no loader for this environment specified")) or
+        # slipping through to a render-time failure.
+        resp = client.post(
+            "/", data={"template_text": '{% include "other.j2" %}{{ S_x }}', "submit": "Parse template"}
+        )
         assert resp.status_code == 400
-        body = resp.data.decode()
-        assert "Rendering failed" in body
-        assert "no others to include" in body
+        assert b"other.j2" in resp.data
 
     def test_import_is_refused_the_same_way(self, client):
-        resp = self._render(client, '{% import "m.j2" as m %}{{ S_x }}', S_x="a")
+        resp = client.post(
+            "/", data={"template_text": '{% import "m.j2" as m %}{{ S_x }}', "submit": "Parse template"}
+        )
         assert resp.status_code == 400
-        assert "Rendering failed" in resp.data.decode()
+        assert b"m.j2" in resp.data
 
     def test_a_template_that_divides_by_zero_is_a_400(self, client):
         resp = self._render(client, "{{ 1 / 0 }}{{ S_x }}", S_x="a")
@@ -653,6 +663,104 @@ class TestRenderFailuresStayOnTheForm:
         resp = self._render(client, template, S_env="prod")
         assert resp.status_code == 200
         assert "{{ ansible_hostname }} in prod" in resp.data.decode()
+
+
+class TestTemplateReuseEndToEnd:
+    """extends/include/import against a real TEMPLATE_DIR, parse through render."""
+
+    CHILD = (
+        '{% extends "base.j2" %}'
+        "{% block servers %}"
+        '{% include "_header.j2" %}'
+        "server {{ S_host }}:{{ N_port }};"
+        "{% endblock %}"
+    )
+
+    def _parse(self, client, library, template=None):
+        (library / "base.j2").write_text(
+            "upstream {{ S_service }} {\n{% block servers %}{% endblock %}\n}\n"
+        )
+        (library / "_header.j2").write_text("# managed by dynaform\n")
+        resp = client.post(
+            "/",
+            data={"template_text": template or self.CHILD, "submit": "Parse template"},
+        )
+        return resp, _extract(resp.data.decode(), "template_source")
+
+    def test_fields_from_base_and_child_are_both_collected(self, client, library):
+        resp, _source = self._parse(client, library)
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert 'name="S_service"' in html
+        assert 'name="S_host"' in html
+        assert 'name="N_port"' in html
+
+    def test_render_combines_base_partial_and_child(self, client, library):
+        _resp, source = self._parse(client, library)
+        resp = client.post(
+            "/render",
+            data={
+                "template_source": source,
+                "S_service": "web",
+                "S_host": "10.0.0.1",
+                "N_port": "8080",
+                "submit": "Render template",
+            },
+        )
+        assert resp.status_code == 200
+        out = resp.data.decode()
+        assert "upstream web {" in out
+        assert "# managed by dynaform" in out
+        assert "server 10.0.0.1:8080;" in out
+
+    def test_base_removed_between_parse_and_render_is_refused(self, client, library):
+        _resp, source = self._parse(client, library)
+        (library / "base.j2").unlink()
+        resp = client.post(
+            "/render",
+            data={
+                "template_source": source,
+                "S_service": "web",
+                "S_host": "10.0.0.1",
+                "N_port": "8080",
+                "submit": "Render template",
+            },
+        )
+        assert resp.status_code == 400
+        assert b"base.j2" in resp.data
+
+    def test_dynamic_include_name_is_refused(self, client, library):
+        resp = client.post(
+            "/",
+            data={"template_text": "{% include S_choice %}", "submit": "Parse template"},
+        )
+        assert resp.status_code == 400
+        assert b"dynamic" in resp.data
+
+    def test_a_cycle_is_refused(self, client, library):
+        (library / "a.j2").write_text('{% extends "b.j2" %}')
+        (library / "b.j2").write_text('{% extends "a.j2" %}')
+        resp = client.post(
+            "/", data={"template_text": '{% extends "a.j2" %}', "submit": "Parse template"}
+        )
+        assert resp.status_code == 400
+        assert b"cycle" in resp.data
+
+    def test_underscore_partial_is_usable_though_not_in_the_picker_value(self, client, library):
+        # The picker keeps _-prefixed names out of the <select> (see
+        # TestTemplateLibrary); the loader still serves them by name, which is
+        # what the render above already exercises end to end.
+        (library / "base.j2").write_text("x")
+        (library / "_only_via_include.j2").write_text("{{ S_x }}")
+        resp = client.post(
+            "/",
+            data={
+                "template_text": '{% include "_only_via_include.j2" %}',
+                "submit": "Parse template",
+            },
+        )
+        assert resp.status_code == 200
+        assert b'name="S_x"' in resp.data
 
 
 class TestOwnJinjaLogic:

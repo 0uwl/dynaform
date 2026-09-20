@@ -222,6 +222,142 @@ class TestLiteralDefaults:
         assert self._field(parsed, "B_admin").default is True
 
 
+class TestTemplateReuse:
+    """extends / include / import discovery -- see HANDOFF.md for the cases
+    these reproduce; `resolve` here is a plain dict lookup standing in for
+    template_library.read_template.
+    """
+
+    def _resolve(self, files):
+        return files.get
+
+    def test_extends_and_include_and_import_all_resolve(self):
+        # HANDOFF.md finding 1.
+        files = {
+            "base.j2": "{% block body %}base{% endblock %}",
+            "macros.j2": "{% macro port(p) %}{{ S_host }}:{{ p }}{% endmacro %}",
+            "header.j2": "header for {{ S_host }}",
+        }
+        template = (
+            '{% extends "base.j2" %}'
+            '{% import "macros.j2" as m with context %}'
+            '{% block body %}{% include "header.j2" %}{{ super() }}'
+            "{{ m.port(N_port) }}{% endblock %}"
+        )
+        parsed = parse_template(template, resolve=self._resolve(files))
+        assert {f.var_name for f in parsed.fields} == {"S_host", "N_port"}
+
+    def test_overridden_base_block_without_super_drops_base_fields(self):
+        files = {"base.j2": "{% block a %}{{ S_dead }}{% endblock %}"}
+        template = '{% extends "base.j2" %}{% block a %}{{ S_live }}{% endblock %}'
+        parsed = parse_template(template, resolve=self._resolve(files))
+        assert {f.var_name for f in parsed.fields} == {"S_live"}
+
+    def test_super_pulls_in_the_base_blocks_own_fields(self):
+        files = {"base.j2": "{% block a %}{{ S_base }}{% endblock %}"}
+        template = '{% extends "base.j2" %}{% block a %}{{ super() }}{{ S_child }}{% endblock %}'
+        parsed = parse_template(template, resolve=self._resolve(files))
+        assert {f.var_name for f in parsed.fields} == {"S_base", "S_child"}
+
+    def test_child_block_absent_from_base_is_dead(self):
+        files = {"base.j2": "{{ S_base_top }}"}
+        template = '{% extends "base.j2" %}{% block nosuch %}{{ S_ghost }}{% endblock %}'
+        parsed = parse_template(template, resolve=self._resolve(files))
+        assert {f.var_name for f in parsed.fields} == {"S_base_top"}
+
+    def test_import_without_context_hides_its_variables(self):
+        files = {"m.j2": "{{ S_hidden }}"}
+        template = '{% import "m.j2" as m %}{{ m }}{{ S_visible }}'
+        parsed = parse_template(template, resolve=self._resolve(files))
+        assert {f.var_name for f in parsed.fields} == {"S_visible"}
+
+    def test_import_with_context_exposes_its_variables(self):
+        files = {"m.j2": "{{ S_shown }}"}
+        template = '{% import "m.j2" as m with context %}{{ m }}'
+        parsed = parse_template(template, resolve=self._resolve(files))
+        assert {f.var_name for f in parsed.fields} == {"S_shown"}
+
+    def test_a_top_level_import_is_visible_inside_the_templates_own_block(self):
+        # Jinja compiles a block as its own frame; without _declared_names
+        # this would misread the import's target `m` as an undeclared field.
+        files = {"base.j2": "{% block a %}{% endblock %}"}
+        template = (
+            '{% extends "base.j2" %}{% import "base.j2" as m %}'
+            "{% block a %}{{ m }}{{ S_x }}{% endblock %}"
+        )
+        parsed = parse_template(template, resolve=self._resolve(files))
+        assert {f.var_name for f in parsed.fields} == {"S_x"}
+
+    def test_diamond_shaped_reuse_is_not_a_cycle(self):
+        files = {
+            "base.j2": '{% block body %}{% include "shared.j2" %}{% endblock %}',
+            "shared.j2": "{{ S_shared }}",
+        }
+        template = (
+            '{% extends "base.j2" %}{% include "shared.j2" %}'
+            "{% block body %}{{ super() }}{% endblock %}"
+        )
+        parsed = parse_template(template, resolve=self._resolve(files))
+        assert {f.var_name for f in parsed.fields} == {"S_shared"}
+
+    def test_dynamic_include_name_is_refused(self):
+        with pytest.raises(TemplateValidationError, match="dynamic"):
+            parse_template("{% include S_choice %}", resolve=self._resolve({}))
+
+    def test_extends_cycle_is_refused(self):
+        files = {"a.j2": '{% extends "b.j2" %}', "b.j2": '{% extends "a.j2" %}'}
+        with pytest.raises(TemplateValidationError, match="cycle"):
+            parse_template('{% extends "a.j2" %}', resolve=self._resolve(files))
+
+    def test_missing_referenced_template_is_refused(self):
+        with pytest.raises(TemplateValidationError, match="nope.j2"):
+            parse_template('{% include "nope.j2" %}', resolve=self._resolve({}))
+
+    def test_no_resolver_refuses_any_reference(self):
+        with pytest.raises(TemplateValidationError):
+            parse_template('{% include "anything.j2" %}')
+
+    def test_too_deep_a_chain_is_refused(self):
+        files = {}
+        for i in range(15):
+            nxt = f'{{% include "d{i + 1}.j2" %}}' if i < 14 else "{{ S_deep }}"
+            files[f"d{i}.j2"] = nxt
+        with pytest.raises(TemplateValidationError, match="deep"):
+            parse_template('{% include "d0.j2" %}', resolve=self._resolve(files))
+
+    def test_too_many_referenced_templates_is_refused(self):
+        files = {f"t{i}.j2": "x" for i in range(60)}
+        template = "".join(f'{{% include "t{i}.j2" %}}' for i in range(60))
+        with pytest.raises(TemplateValidationError, match="More than 50"):
+            parse_template(template, resolve=self._resolve(files))
+
+    def test_a_referenced_templates_syntax_error_is_refused(self):
+        files = {"bad.j2": "{% if %}"}
+        with pytest.raises(TemplateValidationError, match="syntax error"):
+            parse_template('{% include "bad.j2" %}', resolve=self._resolve(files))
+
+    def test_a_block_nested_inside_another_block_is_not_lost(self):
+        # A block nested inside another block is its own independently
+        # overridable block (Jinja registers it separately), reached via the
+        # enclosing block's body -- isolating the outer block must not sever
+        # that path when computing the inner block's own effective vars.
+        files = {
+            "base.j2": "{% block outer %}O[{% block inner %}{{ S_inner }}{% endblock %}]{% endblock %}"
+        }
+        parsed = parse_template('{% extends "base.j2" %}', resolve=self._resolve(files))
+        assert {f.var_name for f in parsed.fields} == {"S_inner"}
+
+    def test_nested_block_survives_an_intermediate_super_override(self):
+        files = {
+            "grandparent.j2": (
+                "{% block outer %}GP[{% block inner %}{{ S_gp_inner }}{% endblock %}]{% endblock %}"
+            ),
+            "parent.j2": '{% extends "grandparent.j2" %}{% block outer %}P[{{ super() }}]{% endblock %}',
+        }
+        parsed = parse_template('{% extends "parent.j2" %}', resolve=self._resolve(files))
+        assert {f.var_name for f in parsed.fields} == {"S_gp_inner"}
+
+
 class TestRadioDefaults:
     def test_truthy_default_preselects_that_option(self):
         template = "{{ R_color_red }}{{ R_color_blue | default(true) }}{{ R_color_green }}"

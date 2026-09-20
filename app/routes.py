@@ -2,40 +2,19 @@
 from __future__ import annotations
 
 from flask import Blueprint, Response, current_app, flash, render_template, request
-from jinja2 import BaseLoader, TemplateNotFound
 from jinja2.exceptions import SecurityError
 from jinja2.sandbox import SandboxedEnvironment
 
 from .forms import UploadForm, build_dynamic_form
 from .template_library import read_template
+from .template_loader import LibraryLoader
 from .template_parser import TemplateValidationError, parse_template
 
 bp = Blueprint("dynaform", __name__)
 
-
-class _NoOtherTemplates(BaseLoader):
-    """Refuse {% include %}, {% import %} and {% extends %}, in words.
-
-    DynaForm renders one template on its own, so there is nothing for these to
-    load -- and giving the environment a real loader is exactly how a template
-    would get to read files off the host. Without a loader at all Jinja raises
-    TypeError("no loader for this environment specified"), which is neither
-    caught below nor meaningful to whoever wrote the template; TemplateNotFound
-    is both.
-    """
-
-    def get_source(self, environment, template):
-        raise TemplateNotFound(
-            template,
-            message=(
-                f"this template refers to another template ({template}), and "
-                "DynaForm renders one template on its own -- there are no "
-                "others to include, import or extend"
-            ),
-        )
-
-
-_RENDER_ENV = SandboxedEnvironment(loader=_NoOtherTemplates())
+# cache_size=0: a directory template is small, low-traffic, and a stale
+# compiled include/extends target would be worse than re-parsing it.
+_RENDER_ENV = SandboxedEnvironment(loader=LibraryLoader(), cache_size=0)
 
 
 def _ordered_items(parsed):
@@ -104,7 +83,7 @@ def parse():
         return render_template("index.html", form=UploadForm()), 400
 
     try:
-        parsed = parse_template(source)
+        parsed = parse_template(source, resolve=read_template)
     except TemplateValidationError as exc:
         current_app.logger.warning(f"Template rejected: {exc}")
         flash(str(exc), "danger")
@@ -154,7 +133,7 @@ def render():
         return render_template("index.html", form=UploadForm()), 400
 
     try:
-        parsed = parse_template(source)
+        parsed = parse_template(source, resolve=read_template)
     except TemplateValidationError as exc:
         current_app.logger.warning(f"Re-validation failed on render: {exc}")
         flash(str(exc), "danger")
