@@ -37,7 +37,19 @@ def library_root() -> Path | None:
 
 
 def list_templates() -> list[LibraryTemplate]:
-    """Scan the template directory for readable .j2/.txt files.
+    """The directory's templates that belong in the picker.
+
+    Files whose name starts with "_" are left out -- they are partials meant
+    to be pulled in with {% include %} / {% import %}, not chosen directly.
+    That is a listing convention, not a permission boundary: `read_template`
+    (what the Jinja loader calls through) still serves them by name, since
+    the whole directory is already reachable through this same picker.
+    """
+    return [t for t in _scan() if not Path(t.name).name.startswith("_")]
+
+
+def _scan() -> list[LibraryTemplate]:
+    """Every readable .j2/.txt file in the directory, "_"-prefixed included.
 
     Scanned per request rather than cached, so a file dropped into the
     bind-mounted directory shows up on the next page load with no restart.
@@ -75,13 +87,15 @@ def list_templates() -> list[LibraryTemplate]:
 
 
 def read_template(name: str) -> str | None:
-    """Return a listed template's text, or None when it isn't listed.
+    """Return a directory template's text, or None when it can't be found.
 
-    The name is matched against the scan rather than joined onto the root, so
-    a crafted value ("../../etc/passwd") has nothing to match and is simply
-    not found -- there is no user input on the path-building side at all.
+    Matched against the full scan, not just the picker's list, so a "_"
+    partial resolves too -- and against the scan rather than joined onto the
+    root, so a crafted value ("../../etc/passwd") has nothing to match and is
+    simply not found -- there is no user input on the path-building side at
+    all.
     """
-    for template in list_templates():
+    for template in _scan():
         if template.name == name:
             try:
                 return template.path.read_text(encoding="utf-8", errors="replace")

@@ -98,6 +98,25 @@ class TestSymlinks:
         assert _names(app) == []
 
 
+class TestUnderscorePartials:
+    def test_underscore_prefixed_file_is_not_listed(self, app, library):
+        (library / "_header.j2").write_text(TEMPLATE)
+        (library / "visible.j2").write_text(TEMPLATE)
+        assert _names(app) == ["visible.j2"]
+
+    def test_underscore_prefixed_file_is_still_readable(self, app, library):
+        (library / "_header.j2").write_text(TEMPLATE)
+        with app.test_request_context():
+            assert read_template("_header.j2") == TEMPLATE
+
+    def test_underscore_applies_to_the_filename_not_the_directory(self, app, library):
+        (library / "linux").mkdir()
+        (library / "linux" / "_sshd.j2").write_text(TEMPLATE)
+        assert _names(app) == []
+        with app.test_request_context():
+            assert read_template("linux/_sshd.j2") == TEMPLATE
+
+
 class TestReadTemplate:
     def test_reads_a_listed_template(self, app, library):
         (library / "greet.j2").write_text(TEMPLATE)

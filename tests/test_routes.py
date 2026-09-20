@@ -270,6 +270,13 @@ class TestTemplateLibrary:
         assert 'name="template_choice"' in html
         assert 'value="greeting.j2"' in html
 
+    def test_underscore_prefixed_partial_stays_out_of_the_picker(self, client, library):
+        (library / "greeting.j2").write_text(TEMPLATE)
+        (library / "_header.j2").write_text(TEMPLATE)
+        html = client.get("/").data.decode()
+        assert 'value="greeting.j2"' in html
+        assert 'value="_header.j2"' not in html
+
     def test_empty_directory_shows_no_picker(self, client, library):
         html = client.get("/").data.decode()
         assert 'name="template_choice"' not in html
