@@ -3,3 +3,16 @@ Flask-WTF==1.2.1
 WTForms==3.1.2
 Jinja2==3.1.6
 gunicorn==22.0.0
+
+# Transitive dependencies of the above, pinned for the same reason they are:
+# left unpinned, pip resolves "latest compatible right now" on every install,
+# which is exactly as non-reproducible as the OS packages in the Containerfile
+# -- except this layer is *meant* to be reproducible, not to float, so caching
+# it is correct only once it's fully pinned. Regenerate by installing just the
+# five packages above into a clean venv and pip freeze-ing the rest.
+blinker==1.9.0
+click==8.5.0
+itsdangerous==2.2.0
+MarkupSafe==3.0.3
+packaging==26.3
+Werkzeug==3.1.9
