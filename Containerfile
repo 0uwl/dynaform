@@ -13,7 +13,16 @@ FROM python:3.12-slim
 # here: requirements.txt pins what the application *is*, while the security
 # layer underneath it is supposed to move. A build pinned to last month's
 # vulnerabilities is reproducible in the least useful sense of the word.
-RUN apt-get update \
+#
+# APT_CACHE_BUST exists because "supposed to move" otherwise collides with
+# cicd.yml's `cache-from/cache-to: type=gha,scope=dynaform`: with nothing
+# above it changing, BuildKit treats this RUN as a pure function of its own
+# text and replays the cached layer forever, never re-running apt-get against
+# the current archive. The workflow passes the commit SHA here for the same
+# reason it already tags the built image with it -- one value, no drift.
+ARG APT_CACHE_BUST=1
+RUN echo "cache bust: ${APT_CACHE_BUST}" \
+    && apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
     && rm -rf /var/lib/apt/lists/*
 

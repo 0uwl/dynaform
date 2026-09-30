@@ -116,6 +116,7 @@ jobs:
           platforms: linux/amd64
           load: true
           tags: dynaform:${{ github.sha }}
+          build-args: APT_CACHE_BUST=${{ github.sha }}
           cache-from: type=gha,scope=dynaform
           cache-to: type=gha,scope=dynaform,mode=max
       - name: Scan image for CVEs
@@ -237,6 +238,7 @@ jobs:
           platforms: linux/amd64
           load: true
           tags: dynaform:${{ github.sha }}
+          build-args: APT_CACHE_BUST=${{ github.sha }}
           cache-from: type=gha,scope=dynaform
           cache-to: type=gha,scope=dynaform,mode=max
       # exit-code 1 is what makes this a gate rather than a report: a fixable
@@ -277,6 +279,7 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: APT_CACHE_BUST=${{ github.sha }}
           cache-from: type=gha,scope=dynaform
           cache-to: type=gha,scope=dynaform,mode=max
       # Last, so that the release means "this version built, scanned clean and
