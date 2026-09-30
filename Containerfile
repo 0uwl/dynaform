@@ -1,31 +1,5 @@
 FROM python:3.12-slim
 
-# Apply Debian's security updates. The base image is rebuilt on its own
-# schedule, and between rebuilds the packages inside it fall behind the
-# security archive -- as *fixable* CVEs, which is the category `ignore-unfixed`
-# in the Trivy scan deliberately does not filter out. PR #5's first scan found
-# 27 of them (3 CRITICAL, 10 HIGH) in an otherwise untouched base: gzip
-# 1.13-1 with 1.13-1+deb13u1 published, glibc +deb13u3 with +deb13u4
-# published, and so on. Nothing here fixes that except installing them.
-#
-# This deliberately floats, and a Dockerfile linter will say so (droast DF069,
-# hadolint DL3005: "makes builds non-reproducible"). That is the right trade
-# here: requirements.txt pins what the application *is*, while the security
-# layer underneath it is supposed to move. A build pinned to last month's
-# vulnerabilities is reproducible in the least useful sense of the word.
-#
-# APT_CACHE_BUST exists because "supposed to move" otherwise collides with
-# cicd.yml's `cache-from/cache-to: type=gha,scope=dynaform`: with nothing
-# above it changing, BuildKit treats this RUN as a pure function of its own
-# text and replays the cached layer forever, never re-running apt-get against
-# the current archive. The workflow passes the commit SHA here for the same
-# reason it already tags the built image with it -- one value, no drift.
-ARG APT_CACHE_BUST=1
-RUN echo "cache bust: ${APT_CACHE_BUST}" \
-    && apt-get update \
-    && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
-    && rm -rf /var/lib/apt/lists/*
-
 RUN useradd --create-home --uid 1000 dynaform
 WORKDIR /app
 
@@ -52,6 +26,39 @@ COPY app/ app/
 # has nothing to list.
 ENV TEMPLATE_DIR=/templates
 RUN mkdir -p /templates && chown dynaform:dynaform /templates
+
+# Apply Debian's security updates. The base image is rebuilt on its own
+# schedule, and between rebuilds the packages inside it fall behind the
+# security archive -- as *fixable* CVEs, which is the category `ignore-unfixed`
+# in the Trivy scan deliberately does not filter out. PR #5's first scan found
+# 27 of them (3 CRITICAL, 10 HIGH) in an otherwise untouched base: gzip
+# 1.13-1 with 1.13-1+deb13u1 published, glibc +deb13u3 with +deb13u4
+# published, and so on. Nothing here fixes that except installing them.
+#
+# This deliberately floats, and a Dockerfile linter will say so (droast DF069,
+# hadolint DL3005: "makes builds non-reproducible"). That is the right trade
+# here: requirements.txt pins what the application *is*, while the security
+# layer underneath it is supposed to move. A build pinned to last month's
+# vulnerabilities is reproducible in the least useful sense of the word.
+#
+# This is last, not first, so that "supposed to move" costs as little as
+# possible: every layer's cache key chains off the one before it, so busting
+# this one (see APT_CACHE_BUST) only invalidates what comes after -- here,
+# just USER/EXPOSE/CMD metadata, not the COPY/pip install layers above it.
+# Placed where the original "harden early" ordering had it, a cache bust would
+# cascade into re-running pip install on every single commit.
+#
+# APT_CACHE_BUST exists because "supposed to move" otherwise collides with
+# cicd.yml's `cache-from/cache-to: type=gha,scope=dynaform`: with nothing
+# above it changing, BuildKit treats this RUN as a pure function of its own
+# text and replays the cached layer forever, never re-running apt-get against
+# the current archive. The workflow passes the commit SHA here for the same
+# reason it already tags the built image with it -- one value, no drift.
+ARG APT_CACHE_BUST=1
+RUN echo "cache bust: ${APT_CACHE_BUST}" \
+    && apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
+    && rm -rf /var/lib/apt/lists/*
 
 USER dynaform
 EXPOSE 8000
