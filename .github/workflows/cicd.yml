@@ -101,6 +101,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      security-events: write
     steps:
       - uses: actions/checkout@v5
       - uses: docker/setup-buildx-action@v4
@@ -121,11 +122,17 @@ jobs:
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: dynaform:${{ github.sha }}
-          format: table
+          format: sarif
           exit-code: '1'
           ignore-unfixed: true
           vuln-type: ${{ env.SCAN_VULN_TYPE }}
           severity: ${{ env.SCAN_SEVERITY }}
+          output: 'trivy-results.sarif'
+      - name: Report Trivy findings
+        if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: 'trivy-results.sarif'
 
   scan-published:
     name: Scan published image
@@ -139,6 +146,7 @@ jobs:
     permissions:
       contents: read
       packages: read
+      security-events: write
     steps:
       - uses: docker/login-action@v4
         with:
@@ -162,11 +170,17 @@ jobs:
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ghcr.io/${{ github.repository }}:latest
-          format: table
+          format: sarif
           exit-code: '1'
           ignore-unfixed: true
           vuln-type: ${{ env.SCAN_VULN_TYPE }}
           severity: ${{ env.SCAN_SEVERITY }}
+          output: 'trivy-results.sarif'
+      - name: Report Trivy findings
+        if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: 'trivy-results.sarif'
 
   publish:
     name: Publish container
