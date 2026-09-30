@@ -129,6 +129,7 @@ jobs:
           severity: ${{ env.SCAN_SEVERITY }}
           output: 'trivy-results.sarif'
       - name: Report Trivy findings
+        if: always()
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: 'trivy-results.sarif'
@@ -176,6 +177,7 @@ jobs:
           severity: ${{ env.SCAN_SEVERITY }}
           output: 'trivy-results.sarif'
       - name: Report Trivy findings
+        if: always()
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: 'trivy-results.sarif'
