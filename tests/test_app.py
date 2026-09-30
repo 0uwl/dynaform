@@ -3,7 +3,7 @@ import logging
 
 import pytest
 
-from app import SECRET_KEY_MISSING, create_app
+from app import MISSING_KEY_MESSAGE, create_app
 from app.config import Config
 
 
@@ -31,12 +31,12 @@ class TestSecretKeyRequired:
         assert "Environment=SECRET_KEY=" in caplog.text
 
     def test_the_message_points_at_the_quadlet_unit(self):
-        assert "dynaform.container" in SECRET_KEY_MISSING
-        assert "systemctl --user restart dynaform" in SECRET_KEY_MISSING
+        assert "dynaform.container" in MISSING_KEY_MESSAGE
+        assert "systemctl --user restart dynaform" in MISSING_KEY_MESSAGE
 
     def test_the_message_carries_no_key_of_its_own(self):
         # It tells you how to make one; it must never contain a usable value.
-        assert "dev-only-insecure-key" not in SECRET_KEY_MISSING
+        assert "dev-only-insecure-key" not in MISSING_KEY_MESSAGE
 
     def test_debug_and_test_runs_still_get_a_throwaway_key(self, no_secret_key, monkeypatch):
         monkeypatch.setenv("FLASK_DEBUG", "1")
