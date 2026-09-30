@@ -24,7 +24,7 @@ updates:
     cooldown:
       default-days: 7
 
-  # The python:3.12-slim digest in Containerfile and Containerfile.dev. This is
+  # The python:3.12-slim digest in Containerfile. This is
   # how Debian security fixes reach the image, so it has the shortest cooldown.
   # Digest updates only: moving to 3.13-slim changes the Python the lockfiles
   # were compiled for, which is a deliberate change of its own (regenerate the
