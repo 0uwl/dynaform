@@ -121,11 +121,16 @@ jobs:
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: dynaform:${{ github.sha }}
-          format: table
+          format: sarif
           exit-code: '1'
           ignore-unfixed: true
           vuln-type: ${{ env.SCAN_VULN_TYPE }}
           severity: ${{ env.SCAN_SEVERITY }}
+          output: 'trivy-results.sarif'
+      - name: Report Trivy findings
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: 'trivy-results.sarif'
 
   scan-published:
     name: Scan published image
@@ -162,11 +167,16 @@ jobs:
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ghcr.io/${{ github.repository }}:latest
-          format: table
+          format: sarif
           exit-code: '1'
           ignore-unfixed: true
           vuln-type: ${{ env.SCAN_VULN_TYPE }}
           severity: ${{ env.SCAN_SEVERITY }}
+          output: 'trivy-results.sarif'
+      - name: Report Trivy findings
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: 'trivy-results.sarif'
 
   publish:
     name: Publish container
