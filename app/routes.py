@@ -12,8 +12,8 @@ from .template_parser import TemplateValidationError, parse_template
 
 bp = Blueprint("dynaform", __name__)
 
-# cache_size=0: a directory template is small, low-traffic, and a stale
-# compiled include/extends target would be worse than re-parsing it.
+# A directory template is small so the cache can be turned off to 
+# avoid stale includes/extends etc.
 _RENDER_ENV = SandboxedEnvironment(loader=LibraryLoader(), cache_size=0)
 
 
@@ -66,15 +66,10 @@ def parse():
         current_app.logger.info("Loading content from text area")
         source = form.template_text.data
     elif form.template_choice.data:
-        # template_choice holds the template's *name*; the contents have to be
-        # read off disk. This is how "choose, then parse" works with scripting
-        # unavailable.
         current_app.logger.info("Loading content from selected template")
         source = read_template(form.template_choice.data) or ""
     else:
-        # Nothing uploaded, typed or picked. Without this branch `source` is
-        # never bound and the check below raises UnboundLocalError -- a 500
-        # where the user should get the flash message.
+        # Nothing uploaded, typed or picked
         source = ""
 
     if not source.strip():
@@ -148,20 +143,17 @@ def render():
     context = {}
     for spec in parsed.fields:
         value = getattr(dynamic_form, spec.var_name).data
-        # Names only. Which fields were filled in is enough to follow the
-        # mapping; the values belong to whoever typed them, and S_api_token is
-        # no less sensitive than P_password -- the prefix does not say which.
         current_app.logger.debug(f"  Retrieved a value for variable '{spec.var_name}'")
 
         if spec.prefix != "B" and spec.has_default and value in (None, ""):
             # Leave it undefined so Jinja's own `default` filter supplies
             # the value, rather than substituting spec.default here. Both give
-            # the same output for this field -- the filter is in the template
-            # and runs either way -- but leaving it undefined is what bare
+            # the same output for this field (the filter is in the template
+            # and runs either way) but leaving it undefined is what bare
             # Jinja does, so a variable used a second time *without* the filter
             # renders empty here exactly as it would anywhere else.
             #
-            # Checkboxes are excluded on purpose: an unchecked box submits
+            # Checkboxes are excluded on purpose, an unchecked box submits
             # nothing, so omitting it would let default(true) tick it back on
             # and leave the user no way to turn it off. For B_ (and for radio
             # groups below) a default can only mean the state the form starts
@@ -182,8 +174,6 @@ def render():
     try:
         output = _RENDER_ENV.from_string(source).render(**context)
     except SecurityError as exc:
-        # The sandbox refusing a template is the one failure here that is not
-        # a mistake: it is someone reaching outside it, so it stays loud.
         current_app.logger.error(f"Sandbox blocked the template: {exc}")
         return _render_failed(exc, dynamic_form, parsed)
     except Exception as exc:  # noqa: BLE001 - the blind catch is the point

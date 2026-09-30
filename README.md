@@ -571,28 +571,6 @@ can fail a pull request that had nothing to do with it. That is the intended tra
 on a pull request beats finding out mid-release — and the fix is usually to rebuild on a fresher
 base rather than to change anything in the diff.
 
-## Project layout
-
-```
-app/
-  __init__.py           application factory, logging hookup
-  config.py             environment-driven config
-  routes.py             GET / , POST / (parse or load), GET /template-library, POST /render
-  forms.py              upload/picker form + dynamic form builder
-  template_parser.py    parsing, validation, grouping
-  template_library.py   read-only scan of TEMPLATE_DIR
-  templates/            base, index, form, result
-  static/js/            conditional-field toggle, editor sources, output copy/download
-  static/vendor/        vendored Bootstrap 5
-tests/
-.github/workflows/
-  cicd.yml              lint, test, scan, publish
-Containerfile
-dynaform.container      Quadlet unit
-dynaform.md             original design note
-plan.md                 implementation plan and rationale
-```
-
 ## Ideas for later
 
 Not committed to or designed; written down so the reasoning survives.

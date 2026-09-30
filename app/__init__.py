@@ -15,9 +15,6 @@ from .config import Config
 MISSING_KEY_MESSAGE = """\
 SECRET_KEY is not set, so DynaForm will not start.
 
-It signs the CSRF token on every form, and there is no default on purpose: a
-built-in key would be identical on every install, which is no protection.
-
 Generate one:
 
     openssl rand -base64 32
@@ -40,12 +37,9 @@ def create_app() -> Flask:
     app = Flask(__name__)
     app.config.from_object(Config)
 
-    # Piggyback on gunicorn's stdout logger so log lines share one
+    # Use gunicorn's stdout logger so log lines share one
     # formatter/stream instead of a second handler; falls back to Flask's
-    # own default (also stdout) for local `flask run` without gunicorn. Done
-    # before the SECRET_KEY check so that its message lands in the same
-    # stream -- and so the journal carries it for a container that never got
-    # far enough to serve a request.
+    # own default (also stdout) for local `flask run` without gunicorn
     gunicorn_logger = logging.getLogger("gunicorn.error")
     if gunicorn_logger.handlers:
         app.logger.handlers = gunicorn_logger.handlers
@@ -62,12 +56,9 @@ def create_app() -> Flask:
     if not template_dir:
         app.logger.info("TEMPLATE_DIR unset: the template picker is off")
     elif os.path.isdir(template_dir):
-        app.logger.info("Serving directory templates from %s", template_dir)
+        app.logger.info(f"Serving directory templates from {template_dir}")
     else:
-        app.logger.warning(
-            "TEMPLATE_DIR %s is not a directory: the template picker stays empty",
-            template_dir,
-        )
+        app.logger.warning(f"TEMPLATE_DIR {template_dir} is not a directory: the template picker stays empty")
 
     from .routes import bp
 

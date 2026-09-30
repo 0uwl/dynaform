@@ -1,7 +1,7 @@
 """Extract, validate, and group DynaForm variables from a Jinja2 template.
 
-Syntax (see dynaform.md / plan.md): every undeclared template variable must
-be named ``<PREFIX>_<name>`` where PREFIX is one of S/P/N/B/R (text /
+Syntax: every undeclared template variable must
+be named ``<PREFIX>_<NAME>`` where <PREFIX> is one of S/P/N/B/R (text /
 password / number / checkbox / radio). Radio variables are further named
 ``R_<group>_<option>`` and are grouped into one radio-button set per group.
 
@@ -25,7 +25,7 @@ from jinja2.sandbox import SandboxedEnvironment
 
 _ENV = SandboxedEnvironment()
 
-# Provisional -- see HANDOFF.md. Bounds how far a template's reuse graph is
+# Bounds how far a template's reuse graph is
 # walked before parsing refuses rather than following it (or looping) forever.
 MAX_TEMPLATE_DEPTH = 10
 MAX_TEMPLATES_REFERENCED = 50
@@ -87,15 +87,14 @@ def _defaults_in(ast: nodes.Node) -> tuple[dict[str, str | int | float | bool], 
     """Find the variables carrying a ``default`` filter, and its literal value.
 
     Returns the literals keyed by variable, and the names of *every* variable
-    with a default whether or not the value could be read. The two differ for
-    ``{{ S_x | default(S_other) }}``: nothing can be shown for it in a form
-    built before anything is rendered, but the field still has a default, so
-    it still may be left blank and Jinja still resolves it at render time.
-    Guessing at the value would be worse than showing none.
+    with a default whether or not the value could be read. For example: nothing 
+    can be shown for ``{{ S_x | default(S_other) }}`` in a form
+    built before anything is rendered, but the field still technically has a default, so
+    it still may be left blank and Jinja still resolves it at render time, so it must
+    instead be skipped entirely
 
-    The first literal for a variable wins. Writing two is an authoring slip and
-    a form can only show one, so it shows the one a reader meets first -- note
-    that Jinja applies each occurrence independently, so a template with two
+    The first literal for a variable wins. 
+    Note: Jinja applies each occurrence independently, so a template with two
     different defaults for one variable renders both.
     """
     literals: dict[str, str | int | float | bool] = {}

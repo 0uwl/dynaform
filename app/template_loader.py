@@ -1,15 +1,9 @@
 """A Jinja loader scoped to the directory template_library already exposes.
 
 Resolves a referenced name (``{% include %}``, ``{% import %}``, ``{% extends
-%}``) the same way ``read_template`` does: matched against the directory scan,
-never joined onto a path. That scan is where containment, the size cap and the
-dotfile skip already live -- this loader reuses it rather than duplicating it.
+%}``) the same way ``read_template`` does: matched against the directory scan.
 
-Unlike the picker, this loader serves ``_``-prefixed files: the leading
-underscore is a listing convention (see ``template_library.list_templates``),
-not a permission boundary. Anything in the directory is already readable
-through the picker, so a partial being loadable-but-unlisted grants no new
-reach.
+Unlike the picker, this loader serves ``_``-prefixed files
 """
 from __future__ import annotations
 
@@ -27,7 +21,7 @@ class LibraryLoader(BaseLoader):
                 template,
                 message=(
                     f"this template refers to another template ({template}), "
-                    "but no template directory is configured -- there is "
+                    "but no template directory is configured. There is "
                     "nothing to include, import or extend"
                 ),
             )

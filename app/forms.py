@@ -64,8 +64,8 @@ def build_dynamic_form(parsed: ParsedTemplate) -> type[FlaskForm]:
         if spec.prefix == "B":
             validators = []
         elif spec.parent is not None:
-            # ponytail: conditional children are Optional rather than
-            # cross-validated against their parent checkbox's state -- add
+            # Conditional children are Optional rather than
+            # cross-validated against their parent checkbox's state. Add
             # server-side "required if parent checked" if that's ever needed.
             validators = [Optional()]
         elif spec.has_default:
