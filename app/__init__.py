@@ -12,7 +12,7 @@ from .config import Config
 # same key on every install, which is the same as having no key at all. So
 # refusing to start is the only safe answer -- and an operator who has just
 # been refused deserves the exact commands rather than a one-line complaint.
-SECRET_KEY_MISSING = """\
+MISSING_KEY_MESSAGE = """\
 SECRET_KEY is not set, so DynaForm will not start.
 
 It signs the CSRF token on every form, and there is no default on purpose: a
@@ -55,7 +55,7 @@ def create_app() -> Flask:
         if app.debug or app.testing:
             app.config["SECRET_KEY"] = "dev-only-insecure-key"
         else:
-            app.logger.critical(SECRET_KEY_MISSING)
+            app.logger.critical(MISSING_KEY_MESSAGE)
             raise RuntimeError("SECRET_KEY is not set; see the log above for how to set it.")
 
     template_dir = app.config["TEMPLATE_DIR"]
