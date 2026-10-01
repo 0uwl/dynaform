@@ -41,7 +41,7 @@ first occur in the template source.
 
 The prefix rule applies only to variables the template *doesn't define itself*. Anything Jinja
 declares as it goes — `{% set %}`, loop variables, macro arguments, `{% with %}` — needs no prefix
-and never becomes a form field. So does Jinja's own furniture: `range()`, `namespace()`, `dict()`,
+and never becomes a form field. So does Jinja's own functions: `range()`, `namespace()`, `dict()`,
 `loop.index`, every filter and test.
 
 That means ordinary templating works as you'd expect, with the form asking only for the
@@ -67,13 +67,13 @@ Hello {{ username }}
 
 > Unrecognized variable name(s): username. Every variable must start with S_, P_, N_, B_, or R_.
 
-That is deliberate — it's the check that catches a forgotten prefix, which would otherwise leave
+This is to prevent forgotten prefixed which would otherwise leave
 you with a form missing a field and output with a silent blank in it. Either prefix the name so it
 becomes a field (`S_username`), or define it in the template with `{% set %}`.
 
 #### Templates from other systems
 
-Variables belonging to something else — Ansible, Helm, a CI system — would be consumed by this
+Variables belonging to something else - like Ansible, Helm or a CI system - would be consumed by this
 render and come out empty. Wrap them in `{% raw %}` to pass them through untouched:
 
 ```jinja
@@ -88,10 +88,10 @@ template's variables for the second template's renderer.
 
 With `TEMPLATE_DIR` configured (see [Template directory](#template-directory)), a template can
 pull in others from that same directory with `{% extends %}`, `{% include %}`, `{% import %}` and
-`{% from ... import %}` — ordinary Jinja, resolved against exactly the directory the picker already
-lists in full, so this grants no reach a visitor doesn't already have.
+`{% from ... import %}` like ordinary Jinja, resolved against the directory with no reach
+outside of it.
 
-A base template with a block, and a child that fills it in:
+Here's a base template with a block, and a child that fills it in:
 
 ```jinja
 {# base.j2 #}
@@ -115,34 +115,24 @@ calling `{{ super() }}` never renders, so nothing is asked for it; call `super()
 fields join the child's.
 
 Only the **child** goes in the editor and travels in the hidden field between the two requests —
-the same two-request model as ever. Bases and partials stay on disk and are read fresh on every
-request, so an edit to `base.j2` shows up the next time the form is built or the template is
+the same two-request model as normal. Bases and partials stay on disk and are read fresh on every
+request, so an edit to `_base.j2` shows up the next time the form is built or the template is
 rendered, no restart needed.
 
 **A file whose name starts with `_` is loadable but left out of the picker** — a listing
 convention for partials meant to be pulled in with `{% include %}`/`{% import %}` rather than
-chosen directly, not a permission boundary: the directory is already fully readable through the
-picker, so a partial being unlisted grants nothing new.
+chosen directly. Nothing is stopping you from using other "non-parial" templates in the directory
+to extend from, the underscore is only for hiding it from the select element.
 
 A few things are refused, all before anything renders:
 
-- **A dynamically named reference** (`{% include S_choice %}`) — which template that is can't be
+- **A dynamically named reference** (`{% include S_choice %}`) — which template `S_choice` is can't be
   known until render, so the form could never know what fields it needs.
-- **A reference cycle** (`a.j2` extending `b.j2` extending `a.j2`) — naming the loop.
+- **A reference cycle** — `a.j2` extending `b.j2` extending `a.j2`).
 - **Reuse more than 10 templates deep, or touching more than 50 templates** — provisional limits
   against a runaway or pathological graph.
 - **A referenced template that isn't in the directory**, or **no `TEMPLATE_DIR` configured at
-  all** — naming what's missing.
-
-That last one matters between the two requests, too: the child's text is carried in the hidden
-field, but `base.j2` and any partials are read fresh at render time. If one goes missing, or the
-edit introduces a new required field, rendering is refused the same way parsing would be — a
-vanished reference fails outright, and a newly-required field fails the resubmitted form's own
-validation. An edit that only *removes* a requirement (a field a block no longer reads) is not
-refused: rendering goes ahead against the directory as it is now, and that now-unused value is
-quietly dropped rather than passed to a template that has nowhere left to put it. Either way the
-render reflects what's on disk *now*, never a mix of old and new; reload the form after an edit to
-see the current field list.
+  all**
 
 A variable inside a template imported `without context` (Jinja's default for `{% import %}`) is
 not fillable from this form — it renders with whatever that template's own scope gives it, so it
