@@ -18,6 +18,13 @@ on:
   # So the weekly scan can be run on demand instead of waited for.
   workflow_dispatch:
 
+# Default for every job unless it declares its own permissions block below --
+# a job-level block replaces this rather than adding to it, so any job that
+# needs more than read-only checkout still has to spell out that scope too,
+# but jobs that need nothing else (lint, test) can just omit the block.
+permissions:
+  contents: read
+
 # One policy for every place that scans. As three separate literals these
 # would drift, and a release gate that disagrees with the pull request gate is
 # worse than having only one of them.
@@ -31,6 +38,9 @@ on:
 env:
   SCAN_SEVERITY: 'CRITICAL,HIGH,MEDIUM'
   SCAN_VULN_TYPE: 'os,library'
+  # Single source of truth for lint/test's setup-python step, so the
+  # interpreter version can't drift between the two jobs that use it.
+  PYTHON_VERSION: '3.12'
 
 jobs:
   lint:
@@ -39,13 +49,11 @@ jobs:
     # is no new code in it to lint.
     if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
       # Pinned, for the same reason requirements.txt is pinned: an unpinned
       # linter changes what it enforces without a commit, so it can fail CI on
@@ -72,13 +80,11 @@ jobs:
     name: Test
     if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
       # requirements-dev.txt pulls in requirements.txt and adds pytest, so this
       # is the one install the test job needs.
@@ -109,35 +115,19 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v4
-      # amd64 only, and no QEMU: this image is never pushed, it exists to be
-      # read by trivy. Same gha cache as the publish job, so a release build
-      # after a scanned merge is mostly cache hits.
-      - name: Build image for scanning
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: Containerfile
-          platforms: linux/amd64
-          load: true
-          tags: dynaform:${{ github.sha }}
-          build-args: APT_CACHE_BUST=${{ github.sha }}
-          cache-from: type=gha,scope=dynaform
-          cache-to: type=gha,scope=dynaform,mode=max
-      - name: Scan image for CVEs
-        uses: aquasecurity/trivy-action@v0.36.0
+      # Shared with the publish job's identical pre-scan build, so the two
+      # can't drift apart -- see .github/actions/build-scan-image.
+      - uses: ./.github/actions/build-scan-image
+      # Same category as publish's scan below: both scan the image built from
+      # current source (this job on the PR/merge commit, publish on the
+      # tagged release commit), so they're the same conceptual finding set.
+      # Sharing a category makes the later scan overwrite the earlier one in
+      # the Security tab instead of listing the same CVEs twice under two
+      # categories.
+      - uses: ./.github/actions/trivy-scan
         with:
           image-ref: dynaform:${{ github.sha }}
-          format: sarif
-          exit-code: '1'
-          ignore-unfixed: true
-          vuln-type: ${{ env.SCAN_VULN_TYPE }}
-          severity: ${{ env.SCAN_SEVERITY }}
-          output: 'trivy-results.sarif'
-      - name: Report Trivy findings
-        if: always()
-        uses: github/codeql-action/upload-sarif@v4
-        with:
-          sarif_file: 'trivy-results.sarif'
+          category: trivy-image
 
   scan-published:
     name: Scan published image
@@ -153,6 +143,9 @@ jobs:
       packages: read
       security-events: write
     steps:
+      # Only needed to fetch the local ./.github/actions/trivy-scan
+      # definition -- this job scans a remote image and builds nothing.
+      - uses: actions/checkout@v7
       - uses: docker/login-action@v4
         with:
           registry: ghcr.io
@@ -170,22 +163,15 @@ jobs:
             echo "::notice::No published :latest image yet -- nothing to scan."
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
-      - name: Scan published image for CVEs
-        if: steps.published.outputs.exists == 'true'
-        uses: aquasecurity/trivy-action@v0.36.0
+      # Its own category, distinct from trivy-image above: :latest can lag
+      # behind current source (it only moves on a release), so its findings
+      # are a genuinely different scan, not a rescan of the same code -- they
+      # shouldn't overwrite or be conflated with the pre-release listing.
+      - if: steps.published.outputs.exists == 'true'
+        uses: ./.github/actions/trivy-scan
         with:
           image-ref: ghcr.io/${{ github.repository }}:latest
-          format: sarif
-          exit-code: '1'
-          ignore-unfixed: true
-          vuln-type: ${{ env.SCAN_VULN_TYPE }}
-          severity: ${{ env.SCAN_SEVERITY }}
-          output: 'trivy-results.sarif'
-      - name: Report Trivy findings
-        if: always()
-        uses: github/codeql-action/upload-sarif@v4
-        with:
-          sarif_file: 'trivy-results.sarif'
+          category: trivy-published
 
   publish:
     name: Publish container
@@ -198,9 +184,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       # contents: write is for creating the release at the end of this job;
-      # everything before it only reads.
+      # security-events: write is for the SARIF upload from the scan step;
+      # everything else before the publish step only reads.
       contents: write
       packages: write
+      security-events: write
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-qemu-action@v4
@@ -234,17 +222,8 @@ jobs:
       # -- a daemon cannot hold a multi-platform image, so loading and
       # multi-arch are mutually exclusive. It writes the same gha cache the
       # publishing build reads, so the amd64 layers are built once, not twice.
-      - name: Build image for scanning
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: Containerfile
-          platforms: linux/amd64
-          load: true
-          tags: dynaform:${{ github.sha }}
-          build-args: APT_CACHE_BUST=${{ github.sha }}
-          cache-from: type=gha,scope=dynaform
-          cache-to: type=gha,scope=dynaform,mode=max
+      # Shared with the scan job -- see .github/actions/build-scan-image.
+      - uses: ./.github/actions/build-scan-image
       # exit-code 1 is what makes this a gate rather than a report: a fixable
       # finding at or above SCAN_SEVERITY fails the job, and the push step
       # never runs. ignore-unfixed keeps that gate honest -- the Debian base
@@ -259,15 +238,15 @@ jobs:
       # database is fetched at run time -- so re-running a release that passed
       # last month can fail today. That is the point of a security gate, not
       # drift of the kind the pins elsewhere in this file guard against.
-      - name: Scan image for CVEs
-        uses: aquasecurity/trivy-action@v0.36.0
+      #
+      # category: trivy-image is shared with the scan job -- see the comment
+      # there. It also means this upload reports to the Security tab, which a
+      # bare `format: table` console scan never did; that was a gap, since a
+      # release-blocking finding should show up there like every other scan.
+      - uses: ./.github/actions/trivy-scan
         with:
           image-ref: dynaform:${{ github.sha }}
-          format: table
-          exit-code: '1'
-          ignore-unfixed: true
-          vuln-type: ${{ env.SCAN_VULN_TYPE }}
-          severity: ${{ env.SCAN_SEVERITY }}
+          category: trivy-image
       # linux/arm64 covers e.g. a 64-bit Raspberry Pi host; QEMU
       # (setup-qemu-action) emulates it since this runner is amd64.
       # cache-from/to: type=gha caches build layers in the Actions cache
