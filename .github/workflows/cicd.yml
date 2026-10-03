@@ -5,18 +5,12 @@ on:
     branches: [main]
     # Publishing is driven by the tag, not by a GitHub release: the release is
     # created at the end of a green run (see the publish job), so it means the
-    # image built, scanned clean and was pushed. Releasing on `release:
+    # image built and was pushed. Releasing on `release:
     # published` had that backwards -- the release went public first and could
     # end up pointing at an image that was never published.
     tags: ['v*']
   pull_request:
     branches: [main]
-  schedule:
-    # Weekly, deliberately off the hour: on-the-hour crons queue behind
-    # everybody else's and GitHub drops scheduled runs it cannot start.
-    - cron: '17 6 * * 1'
-  # So the weekly scan can be run on demand instead of waited for.
-  workflow_dispatch:
 
 # Default for every job unless it declares its own permissions block below --
 # a job-level block replaces this rather than adding to it, so any job that
@@ -25,19 +19,7 @@ on:
 permissions:
   contents: read
 
-# One policy for every place that scans. As three separate literals these
-# would drift, and a release gate that disagrees with the pull request gate is
-# worse than having only one of them.
-#
-# MEDIUM is included, which is wider than the Trivy docs' example, for a reason
-# specific to this app: every sandbox escape Jinja2 has shipped a fix for
-# (CVE-2024-56201, CVE-2024-56326, CVE-2025-27516) is rated MEDIUM by CVSS.
-# DynaForm renders user-supplied templates and its whole security model is
-# SandboxedEnvironment, so a CRITICAL/HIGH-only gate would wave through the one
-# bug class that actually breaks this app.
 env:
-  SCAN_SEVERITY: 'CRITICAL,HIGH,MEDIUM'
-  SCAN_VULN_TYPE: 'os,library'
   # Single source of truth for lint/test's setup-python step, so the
   # interpreter version can't drift between the two jobs that use it.
   PYTHON_VERSION: '3.12'
@@ -45,9 +27,6 @@ env:
 jobs:
   lint:
     name: Lint
-    # Code events only. The scheduled run re-scans the published image; there
-    # is no new code in it to lint.
-    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -78,7 +57,6 @@ jobs:
 
   test:
     name: Test
-    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -92,89 +70,6 @@ jobs:
       - name: Pytest
         run: pytest -v
 
-  scan:
-    name: Scan image
-    # Pull requests and main. Not tags -- publish scans the very image it is
-    # about to push. Not the schedule -- scan-published covers that, against
-    # what people are actually running rather than a fresh build. Note that a
-    # scheduled run's github.ref is the default branch, so the event has to be
-    # checked as well as the ref.
-    #
-    # This gate can fail on a pull request that did not cause it: a CVE
-    # disclosed against the base image overnight fails everything until the
-    # base is rebuilt. That is the intended trade -- finding out on a pull
-    # request beats finding out while trying to cut a release -- but if it ever
-    # becomes noise, drop exit-code here and leave the release gate blocking.
-    if: >-
-      github.event_name == 'pull_request' ||
-      (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      security-events: write
-    steps:
-      - uses: actions/checkout@v7
-      - uses: docker/setup-buildx-action@v4
-      # Shared with the publish job's identical pre-scan build, so the two
-      # can't drift apart -- see .github/actions/build-scan-image.
-      - uses: ./.github/actions/build-scan-image
-      # Same category as publish's scan below: both scan the image built from
-      # current source (this job on the PR/merge commit, publish on the
-      # tagged release commit), so they're the same conceptual finding set.
-      # Code scanning keeps results per branch/tag/PR, so sharing a category
-      # doesn't make one run overwrite the other here -- they're different
-      # refs. It does keep a later scan on the *same* ref (e.g. a second push
-      # to the same PR) from piling up as a duplicate listing alongside the
-      # first.
-      - uses: ./.github/actions/trivy-scan
-        with:
-          image-ref: dynaform:${{ github.sha }}
-          category: trivy-image
-
-  scan-published:
-    name: Scan published image
-    # The one check a build-time gate cannot make: CVEs disclosed *after* the
-    # image shipped. Nothing in the repository changes when that happens, so
-    # only a clock can catch it -- and :latest is what a `podman pull` of
-    # dynaform.container's image resolves to, i.e. what is actually running on
-    # people's hosts.
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: read
-      security-events: write
-    steps:
-      # Only needed to fetch the local ./.github/actions/trivy-scan
-      # definition -- this job scans a remote image and builds nothing.
-      - uses: actions/checkout@v7
-      - uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      # Before the first release there is no image to scan. Checking keeps
-      # that from being reported as a scan failure, which would train us to
-      # ignore a red weekly run.
-      - id: published
-        name: Check for a published image
-        run: |
-          if docker manifest inspect "ghcr.io/${{ github.repository }}:latest" >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "::notice::No published :latest image yet -- nothing to scan."
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
-      # Its own category, distinct from trivy-image above: :latest can lag
-      # behind current source (it only moves on a release), so its findings
-      # are a genuinely different scan, not a rescan of the same code -- they
-      # shouldn't overwrite or be conflated with the pre-release listing.
-      - if: steps.published.outputs.exists == 'true'
-        uses: ./.github/actions/trivy-scan
-        with:
-          image-ref: ghcr.io/${{ github.repository }}:latest
-          category: trivy-published
-
   publish:
     name: Publish container
     # Publishing on a tag rather than on every push to main means the
@@ -185,12 +80,9 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
-      # contents: write is for creating the release at the end of this job;
-      # security-events: write is for the SARIF upload from the scan step;
-      # everything else before the publish step only reads.
+      # contents: write is for creating the release at the end of this job.
       contents: write
       packages: write
-      security-events: write
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-qemu-action@v4
@@ -218,43 +110,11 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-      # Scanning has to happen between building and pushing, so the build is
-      # split in two. This first one is amd64-only and `load: true`, which
-      # puts the image in the runner's docker daemon where Trivy can read it
-      # -- a daemon cannot hold a multi-platform image, so loading and
-      # multi-arch are mutually exclusive. It writes the same gha cache the
-      # publishing build reads, so the amd64 layers are built once, not twice.
-      # Shared with the scan job -- see .github/actions/build-scan-image.
-      - uses: ./.github/actions/build-scan-image
-      # exit-code 1 is what makes this a gate rather than a report: a fixable
-      # finding at or above SCAN_SEVERITY fails the job, and the push step
-      # never runs. ignore-unfixed keeps that gate honest -- the Debian base
-      # carries CVEs with no patch available yet, and blocking every release on
-      # those would only teach us to reach for the bypass.
-      #
-      # Only the amd64 image is scanned. Findings are per-package, and both
-      # platforms install the same Debian and pip packages from the same
-      # Containerfile, so scanning arm64 as well would report the same list.
-      #
-      # Pinning the action pins the trivy binary, but the vulnerability
-      # database is fetched at run time -- so re-running a release that passed
-      # last month can fail today. That is the point of a security gate, not
-      # drift of the kind the pins elsewhere in this file guard against.
-      #
-      # category: trivy-image is shared with the scan job -- see the comment
-      # there. It also means this upload reports to the Security tab, which a
-      # bare `format: table` console scan never did; that was a gap, since a
-      # release-blocking finding should show up there like every other scan.
-      - uses: ./.github/actions/trivy-scan
-        with:
-          image-ref: dynaform:${{ github.sha }}
-          category: trivy-image
       # linux/arm64 covers e.g. a 64-bit Raspberry Pi host; QEMU
       # (setup-qemu-action) emulates it since this runner is amd64.
       # cache-from/to: type=gha caches build layers in the Actions cache
       # and reuses whatever's still valid on the next run -- including the
-      # amd64 layers the scanned build just wrote, so this step only has
-      # arm64 left to build.
+      # amd64 layers trivy.yml's scan build wrote.
       - name: Build and publish image
         uses: docker/build-push-action@v7
         with:
@@ -264,11 +124,10 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          build-args: APT_CACHE_BUST=${{ github.sha }}
           cache-from: type=gha,scope=dynaform
           cache-to: type=gha,scope=dynaform,mode=max
-      # Last, so that the release means "this version built, scanned clean and
-      # was published" instead of being the thing that starts the attempt. A
+      # Last, so that the release means "this version built and was
+      # published" instead of being the thing that starts the attempt. A
       # release drafted by hand in the web UI pushes its tag, which arrives
       # here as an ordinary tag push -- hence the existence check, so that path
       # publishes the image and leaves the hand-written notes alone.

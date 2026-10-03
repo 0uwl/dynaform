@@ -1,10 +1,8 @@
 """Read-only listing of the operator-supplied template directory.
 
-The directory is whatever the operator points ``TEMPLATE_DIR`` at -- in the
+The directory is whatever the operator points ``TEMPLATE_DIR`` at. In the
 container it is ``/templates``, which is meant to be bind-mounted from the
-host. DynaForm only ever *reads* from it: choosing a template copies its text
-into the textarea on the first page, and whatever the user edits there belongs
-to that request alone. The file on disk is never written to.
+host. DynaForm only ever *reads* from it, the file on disk is never written to.
 """
 from __future__ import annotations
 
@@ -19,8 +17,8 @@ SUFFIXES = frozenset({".j2", ".txt"})
 
 @dataclass(frozen=True)
 class LibraryTemplate:
-    name: str  # path relative to the root; the <option> value and lookup key
-    label: str  # what the <select> shows
+    name: str  # path relative to the root; the <option> element value and lookup key
+    label: str  # what the <select> element shows
     path: Path  # absolute, already confirmed to live under the root
 
 
@@ -91,9 +89,8 @@ def read_template(name: str) -> str | None:
 
     Matched against the full scan, not just the picker's list, so a "_"
     partial resolves too -- and against the scan rather than joined onto the
-    root, so a crafted value ("../../etc/passwd") has nothing to match and is
-    simply not found -- there is no user input on the path-building side at
-    all.
+    root, so a crafted value like "../../etc/passwd" has nothing to match and is
+    simply not found
     """
     for template in _scan():
         if template.name == name:

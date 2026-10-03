@@ -41,7 +41,7 @@ first occur in the template source.
 
 The prefix rule applies only to variables the template *doesn't define itself*. Anything Jinja
 declares as it goes — `{% set %}`, loop variables, macro arguments, `{% with %}` — needs no prefix
-and never becomes a form field. So does Jinja's own furniture: `range()`, `namespace()`, `dict()`,
+and never becomes a form field. So does Jinja's own functions: `range()`, `namespace()`, `dict()`,
 `loop.index`, every filter and test.
 
 That means ordinary templating works as you'd expect, with the form asking only for the
@@ -67,13 +67,13 @@ Hello {{ username }}
 
 > Unrecognized variable name(s): username. Every variable must start with S_, P_, N_, B_, or R_.
 
-That is deliberate — it's the check that catches a forgotten prefix, which would otherwise leave
+This is to prevent forgotten prefixed which would otherwise leave
 you with a form missing a field and output with a silent blank in it. Either prefix the name so it
 becomes a field (`S_username`), or define it in the template with `{% set %}`.
 
 #### Templates from other systems
 
-Variables belonging to something else — Ansible, Helm, a CI system — would be consumed by this
+Variables belonging to something else - like Ansible, Helm or a CI system - would be consumed by this
 render and come out empty. Wrap them in `{% raw %}` to pass them through untouched:
 
 ```jinja
@@ -88,10 +88,10 @@ template's variables for the second template's renderer.
 
 With `TEMPLATE_DIR` configured (see [Template directory](#template-directory)), a template can
 pull in others from that same directory with `{% extends %}`, `{% include %}`, `{% import %}` and
-`{% from ... import %}` — ordinary Jinja, resolved against exactly the directory the picker already
-lists in full, so this grants no reach a visitor doesn't already have.
+`{% from ... import %}` like ordinary Jinja, resolved against the directory with no reach
+outside of it.
 
-A base template with a block, and a child that fills it in:
+Here's a base template with a block, and a child that fills it in:
 
 ```jinja
 {# base.j2 #}
@@ -115,34 +115,24 @@ calling `{{ super() }}` never renders, so nothing is asked for it; call `super()
 fields join the child's.
 
 Only the **child** goes in the editor and travels in the hidden field between the two requests —
-the same two-request model as ever. Bases and partials stay on disk and are read fresh on every
-request, so an edit to `base.j2` shows up the next time the form is built or the template is
+the same two-request model as normal. Bases and partials stay on disk and are read fresh on every
+request, so an edit to `_base.j2` shows up the next time the form is built or the template is
 rendered, no restart needed.
 
 **A file whose name starts with `_` is loadable but left out of the picker** — a listing
 convention for partials meant to be pulled in with `{% include %}`/`{% import %}` rather than
-chosen directly, not a permission boundary: the directory is already fully readable through the
-picker, so a partial being unlisted grants nothing new.
+chosen directly. Nothing is stopping you from using other "non-parial" templates in the directory
+to extend from, the underscore is only for hiding it from the select element.
 
 A few things are refused, all before anything renders:
 
-- **A dynamically named reference** (`{% include S_choice %}`) — which template that is can't be
+- **A dynamically named reference** (`{% include S_choice %}`) — which template `S_choice` is can't be
   known until render, so the form could never know what fields it needs.
-- **A reference cycle** (`a.j2` extending `b.j2` extending `a.j2`) — naming the loop.
+- **A reference cycle** — `a.j2` extending `b.j2` extending `a.j2`).
 - **Reuse more than 10 templates deep, or touching more than 50 templates** — provisional limits
   against a runaway or pathological graph.
 - **A referenced template that isn't in the directory**, or **no `TEMPLATE_DIR` configured at
-  all** — naming what's missing.
-
-That last one matters between the two requests, too: the child's text is carried in the hidden
-field, but `base.j2` and any partials are read fresh at render time. If one goes missing, or the
-edit introduces a new required field, rendering is refused the same way parsing would be — a
-vanished reference fails outright, and a newly-required field fails the resubmitted form's own
-validation. An edit that only *removes* a requirement (a field a block no longer reads) is not
-refused: rendering goes ahead against the directory as it is now, and that now-unused value is
-quietly dropped rather than passed to a template that has nowhere left to put it. Either way the
-render reflects what's on disk *now*, never a mix of old and new; reload the form after an edit to
-see the current field list.
+  all**
 
 A variable inside a template imported `without context` (Jinja's default for `{% import %}`) is
 not fillable from this form — it renders with whatever that template's own scope gives it, so it
@@ -536,62 +526,30 @@ run. The workflow notices the release already exists and leaves your notes alone
 
 ### Vulnerability scanning
 
-Every image is scanned with [Trivy](https://github.com/aquasecurity/trivy) before it can be
-published, and a failing scan stops the push. The policy lives in one place — the `SCAN_SEVERITY`
-and `SCAN_VULN_TYPE` variables at the top of the workflow — so the pull-request gate cannot drift
-from the release gate.
+Every image is scanned with [Trivy](https://github.com/aquasecurity/trivy) and the findings are
+uploaded to the repository's Security tab. The scan lives in its own workflow,
+`.github/workflows/trivy.yml`, and only reports: it never fails a pull request or blocks a release.
+The policy is the `SCAN_SEVERITY` and `SCAN_VULN_TYPE` variables at the top of that workflow.
 
 Two deliberate choices there:
 
 - **`MEDIUM` is included**, which is wider than Trivy's own example. Every Jinja2 sandbox escape
   that has a fix (CVE-2024-56201, CVE-2024-56326, CVE-2025-27516) is rated MEDIUM by CVSS, and
-  this app's security model *is* the sandbox. A CRITICAL/HIGH-only gate would wave through the one
-  bug class that actually breaks DynaForm.
+  this app's security model *is* the sandbox. A CRITICAL/HIGH-only report would hide the one bug
+  class that actually breaks DynaForm.
 - **Unfixed vulnerabilities are ignored.** A Debian base always carries CVEs with no patch
-  available; failing every release on those teaches people to bypass the gate rather than fix
-  anything.
+  available; listing them would bury the findings you can act on.
 
-Note what that second choice does *not* cover. The findings that actually fail this gate are the
-*fixable* ones, and most of them come from the base image rather than from anything in this
-repository: `python:3.12-slim` is rebuilt on its own schedule, so between rebuilds its packages
-fall behind Debian's security archive while patched versions sit in the archive unused. That is
-why the `Containerfile` applies `apt-get upgrade` and upgrades `pip`. Without it, a scan of an
-otherwise untouched base image fails on tens of CVEs that have nothing to do with the change being
-reviewed. Expect it to recur: each time Debian publishes updates ahead of a base-image rebuild,
-the next build picks them up, and the weekly scan is what tells you an already-published image has
-fallen behind.
+The `Containerfile` is reproducible: the base image is pinned by digest and nothing in it runs
+`apt-get update` or `upgrade`. Most fixable findings therefore come from the base image falling
+behind Debian's security archive, and the fix is the Dependabot pull request that bumps the
+`python:3.12-slim` digest, not a change to the `Containerfile`.
 
-The weekly run scans the *published* `:latest` image rather than a fresh build. That is the one
-thing a build-time gate cannot do: catch a CVE disclosed after the image shipped, when nothing in
-the repository has changed but the image on your host is newly vulnerable. It can also be run on
-demand from the Actions tab.
-
-Because the scan is a gate on pull requests too, a CVE disclosed against the base image overnight
-can fail a pull request that had nothing to do with it. That is the intended trade — finding out
-on a pull request beats finding out mid-release — and the fix is usually to rebuild on a fresher
-base rather than to change anything in the diff.
-
-## Project layout
-
-```
-app/
-  __init__.py           application factory, logging hookup
-  config.py             environment-driven config
-  routes.py             GET / , POST / (parse or load), GET /template-library, POST /render
-  forms.py              upload/picker form + dynamic form builder
-  template_parser.py    parsing, validation, grouping
-  template_library.py   read-only scan of TEMPLATE_DIR
-  templates/            base, index, form, result
-  static/js/            conditional-field toggle, editor sources, output copy/download
-  static/vendor/        vendored Bootstrap 5
-tests/
-.github/workflows/
-  cicd.yml              lint, test, scan, publish
-Containerfile
-dynaform.container      Quadlet unit
-dynaform.md             original design note
-plan.md                 implementation plan and rationale
-```
+Pull requests, `main` and release tags each get a scan of the image built from that commit. The
+weekly run scans the *published* `:latest` image instead, which catches a CVE disclosed after the
+image shipped, when nothing in the repository has changed. Its findings are filed under the
+release tag that image was built from (read from the image's OCI labels), not under `main`. It can
+also be run on demand from the Actions tab.
 
 ## Ideas for later
 
