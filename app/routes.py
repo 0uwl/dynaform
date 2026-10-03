@@ -6,8 +6,7 @@ from jinja2.exceptions import SecurityError
 from jinja2.sandbox import SandboxedEnvironment
 
 from .forms import UploadForm, build_dynamic_form
-from .template_library import read_template
-from .template_loader import LibraryLoader
+from .template_library import LibraryLoader, read_template
 from .template_parser import TemplateValidationError, parse_template
 
 bp = Blueprint("dynaform", __name__)

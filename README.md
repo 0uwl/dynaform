@@ -497,7 +497,7 @@ The suite has no external dependencies and needs no running server:
 
 ## Continuous integration
 
-`.github/workflows/cicd.yml` is the whole pipeline. What runs depends on the event:
+`.github/workflows/ci.yml` is the whole pipeline. What runs depends on the event:
 
 | Event                    | Lint | Test | Scan image | Scan published image | Publish |
 |--------------------------|:----:|:----:|:----------:|:--------------------:|:-------:|

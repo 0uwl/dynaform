@@ -223,16 +223,14 @@ class TestLiteralDefaults:
 
 
 class TestTemplateReuse:
-    """extends / include / import discovery -- see HANDOFF.md for the cases
-    these reproduce; `resolve` here is a plain dict lookup standing in for
-    template_library.read_template.
+    """extends / include / import discovery. `resolve` here is a plain dict
+    lookup standing in for template_library.read_template.
     """
 
     def _resolve(self, files):
         return files.get
 
     def test_extends_and_include_and_import_all_resolve(self):
-        # HANDOFF.md finding 1.
         files = {
             "base.j2": "{% block body %}base{% endblock %}",
             "macros.j2": "{% macro port(p) %}{{ S_host }}:{{ p }}{% endmacro %}",

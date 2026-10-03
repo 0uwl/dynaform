@@ -1,7 +1,6 @@
 version: 2
 updates:
-  # The SHA pins in .github/workflows/cicd.yml. Dependabot rewrites the SHA and
-  # the version comment beside it together.
+  # The action version tags in .github/workflows/.
   - package-ecosystem: github-actions
     directory: /
     schedule:
@@ -13,9 +12,7 @@ updates:
       actions:
         patterns: ['*']
 
-  # requirements.in and the pip-compile lockfiles generated from it. If an
-  # update leaves requirements-dev.txt stale, CI's lockfile check fails the
-  # pull request rather than letting the two drift.
+  # The pins in requirements.txt and requirements-dev.txt.
   - package-ecosystem: pip
     directory: /
     schedule:
@@ -26,9 +23,9 @@ updates:
 
   # The python:3.12-slim digest in Containerfile. This is
   # how Debian security fixes reach the image, so it has the shortest cooldown.
-  # Digest updates only: moving to 3.13-slim changes the Python the lockfiles
-  # were compiled for, which is a deliberate change of its own (regenerate the
-  # locks on the new version, update CI's python-version), not a weekly bump.
+  # Digest updates only: moving to 3.13-slim is a deliberate change of its own
+  # (re-pin requirements on the new version, update CI's PYTHON_VERSION), not a
+  # weekly bump.
   - package-ecosystem: docker
     directory: /
     schedule:

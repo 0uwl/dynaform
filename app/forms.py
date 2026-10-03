@@ -44,7 +44,7 @@ class UploadForm(FlaskForm):
         # validation rejects any value that isn't currently on disk.
         self.library_templates = list_templates()
         self.template_choice.choices = [("", "-- none --")] + [
-            (template.name, template.label) for template in self.library_templates
+            (template.name, template.name) for template in self.library_templates
         ]
 
 
