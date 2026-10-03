@@ -121,9 +121,11 @@ jobs:
       # Same category as publish's scan below: both scan the image built from
       # current source (this job on the PR/merge commit, publish on the
       # tagged release commit), so they're the same conceptual finding set.
-      # Sharing a category makes the later scan overwrite the earlier one in
-      # the Security tab instead of listing the same CVEs twice under two
-      # categories.
+      # Code scanning keeps results per branch/tag/PR, so sharing a category
+      # doesn't make one run overwrite the other here -- they're different
+      # refs. It does keep a later scan on the *same* ref (e.g. a second push
+      # to the same PR) from piling up as a duplicate listing alongside the
+      # first.
       - uses: ./.github/actions/trivy-scan
         with:
           image-ref: dynaform:${{ github.sha }}
