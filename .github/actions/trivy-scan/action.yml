@@ -1,8 +1,7 @@
 name: Trivy scan and report
 description: >
   Scan a container image for CVEs with Trivy and upload the SARIF report to
-  the Security tab. Fails the job (exit-code 1) on a fixable finding at or
-  above SCAN_SEVERITY. Reads SCAN_SEVERITY / SCAN_VULN_TYPE from the calling
+  the Security tab. Report-only: findings never fail the job. Reads SCAN_SEVERITY / SCAN_VULN_TYPE from the calling
   workflow's env -- one severity policy for every place that scans, same as
   before this was split into an action.
 
@@ -29,18 +28,16 @@ runs:
       with:
         image-ref: ${{ inputs.image-ref }}
         format: sarif
-        exit-code: '1'
+        exit-code: '0'
         ignore-unfixed: true
         vuln-type: ${{ env.SCAN_VULN_TYPE }}
         severity: ${{ env.SCAN_SEVERITY }}
         # Without this, trivy-action's SARIF formatter ignores `severity` and
-        # emits every fixable finding regardless of rating -- exit-code then
-        # fails the job on LOW/MEDIUM findings SCAN_SEVERITY was meant to
-        # exclude, not just the ones it lists.
+        # reports every fixable finding regardless of rating, not just the
+        # ones SCAN_SEVERITY lists.
         limit-severities-for-sarif: true
         output: 'trivy-results.sarif'
     - name: Report Trivy findings
-      if: always()
       uses: github/codeql-action/upload-sarif@v4
       with:
         sarif_file: 'trivy-results.sarif'

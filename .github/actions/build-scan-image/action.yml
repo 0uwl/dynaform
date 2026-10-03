@@ -19,6 +19,5 @@ runs:
         platforms: linux/amd64
         load: true
         tags: dynaform:${{ github.sha }}
-        build-args: APT_CACHE_BUST=${{ github.sha }}
         cache-from: type=gha,scope=dynaform
         cache-to: type=gha,scope=dynaform,mode=max

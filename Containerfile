@@ -1,22 +1,18 @@
-FROM python:3.12-slim
+# Pinned by digest so a rebuild of the same commit produces the same image.
+# Debian security fixes arrive through this digest: Dependabot bumps it
+# (.github/dependabot.yml), and the Trivy scan reports what the current one
+# carries.
+FROM python:3.12-slim@sha256:dddfd7e07f9d15aeeca61529320492139d21cac7f0070c00609243e51e4e0016
 
 RUN useradd --create-home --uid 1000 dynaform
 WORKDIR /app
 
-# pip ships in the base image and is scanned like anything else, so it is
-# upgraded first (25.0.1 carried five fixable CVEs) and then removed once the
-# dependencies are in place.
-#
-# Removing it is not tidiness. pip 26 ships a PEP 770 SBOM declaring the
-# packages it vendors, which Trivy reads -- so an up-to-date pip reports CVEs
-# against its *bundled* msgpack and setuptools (GHSA-6v7p-g79w-8964,
-# CVE-2025-47273, CVE-2026-59890) that no upgrade of pip itself can clear.
-# Nothing at run time needs pip: gunicorn runs the app. Taking it out drops
-# that whole inventory from the image, and a runtime that cannot install
+# pip is removed once the dependencies are in place. Nothing at run time needs
+# it -- gunicorn runs the app -- and Trivy reads the PEP 770 SBOM pip ships,
+# reporting CVEs against the packages it vendors. A runtime that cannot install
 # packages is the better shape anyway.
 COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -r requirements.txt \
+RUN pip install --no-cache-dir -r requirements.txt \
     && pip uninstall --yes pip
 
 COPY app/ app/
@@ -26,39 +22,6 @@ COPY app/ app/
 # has nothing to list.
 ENV TEMPLATE_DIR=/templates
 RUN mkdir -p /templates && chown dynaform:dynaform /templates
-
-# Apply Debian's security updates. The base image is rebuilt on its own
-# schedule, and between rebuilds the packages inside it fall behind the
-# security archive -- as *fixable* CVEs, which is the category `ignore-unfixed`
-# in the Trivy scan deliberately does not filter out. PR #5's first scan found
-# 27 of them (3 CRITICAL, 10 HIGH) in an otherwise untouched base: gzip
-# 1.13-1 with 1.13-1+deb13u1 published, glibc +deb13u3 with +deb13u4
-# published, and so on. Nothing here fixes that except installing them.
-#
-# This deliberately floats, and a Dockerfile linter will say so (droast DF069,
-# hadolint DL3005: "makes builds non-reproducible"). That is the right trade
-# here: requirements.txt pins what the application *is*, while the security
-# layer underneath it is supposed to move. A build pinned to last month's
-# vulnerabilities is reproducible in the least useful sense of the word.
-#
-# This is last, not first, so that "supposed to move" costs as little as
-# possible: every layer's cache key chains off the one before it, so busting
-# this one (see APT_CACHE_BUST) only invalidates what comes after -- here,
-# just USER/EXPOSE/CMD metadata, not the COPY/pip install layers above it.
-# Placed where the original "harden early" ordering had it, a cache bust would
-# cascade into re-running pip install on every single commit.
-#
-# APT_CACHE_BUST exists because "supposed to move" otherwise collides with
-# cicd.yml's `cache-from/cache-to: type=gha,scope=dynaform`: with nothing
-# above it changing, BuildKit treats this RUN as a pure function of its own
-# text and replays the cached layer forever, never re-running apt-get against
-# the current archive. The workflow passes the commit SHA here for the same
-# reason it already tags the built image with it -- one value, no drift.
-ARG APT_CACHE_BUST=1
-RUN echo "cache bust: ${APT_CACHE_BUST}" \
-    && apt-get update \
-    && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
-    && rm -rf /var/lib/apt/lists/*
 
 USER dynaform
 EXPOSE 8000

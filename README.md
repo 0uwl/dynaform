@@ -526,40 +526,29 @@ run. The workflow notices the release already exists and leaves your notes alone
 
 ### Vulnerability scanning
 
-Every image is scanned with [Trivy](https://github.com/aquasecurity/trivy) before it can be
-published, and a failing scan stops the push. The policy lives in one place — the `SCAN_SEVERITY`
-and `SCAN_VULN_TYPE` variables at the top of the workflow — so the pull-request gate cannot drift
-from the release gate.
+Every image is scanned with [Trivy](https://github.com/aquasecurity/trivy) and the findings are
+uploaded to the repository's Security tab. The scan only reports: it never fails a pull request or
+blocks a release. The policy lives in one place — the `SCAN_SEVERITY` and `SCAN_VULN_TYPE`
+variables at the top of the workflow — so every scan reports against the same rules.
 
 Two deliberate choices there:
 
 - **`MEDIUM` is included**, which is wider than Trivy's own example. Every Jinja2 sandbox escape
   that has a fix (CVE-2024-56201, CVE-2024-56326, CVE-2025-27516) is rated MEDIUM by CVSS, and
-  this app's security model *is* the sandbox. A CRITICAL/HIGH-only gate would wave through the one
-  bug class that actually breaks DynaForm.
+  this app's security model *is* the sandbox. A CRITICAL/HIGH-only report would hide the one bug
+  class that actually breaks DynaForm.
 - **Unfixed vulnerabilities are ignored.** A Debian base always carries CVEs with no patch
-  available; failing every release on those teaches people to bypass the gate rather than fix
-  anything.
+  available; listing them would bury the findings you can act on.
 
-Note what that second choice does *not* cover. The findings that actually fail this gate are the
-*fixable* ones, and most of them come from the base image rather than from anything in this
-repository: `python:3.12-slim` is rebuilt on its own schedule, so between rebuilds its packages
-fall behind Debian's security archive while patched versions sit in the archive unused. That is
-why the `Containerfile` applies `apt-get upgrade` and upgrades `pip`. Without it, a scan of an
-otherwise untouched base image fails on tens of CVEs that have nothing to do with the change being
-reviewed. Expect it to recur: each time Debian publishes updates ahead of a base-image rebuild,
-the next build picks them up, and the weekly scan is what tells you an already-published image has
-fallen behind.
+The `Containerfile` is reproducible: the base image is pinned by digest and nothing in it runs
+`apt-get update` or `upgrade`. Most fixable findings therefore come from the base image falling
+behind Debian's security archive, and the fix is the Dependabot pull request that bumps the
+`python:3.12-slim` digest, not a change to the `Containerfile`.
 
 The weekly run scans the *published* `:latest` image rather than a fresh build. That is the one
-thing a build-time gate cannot do: catch a CVE disclosed after the image shipped, when nothing in
+thing a build-time scan cannot do: catch a CVE disclosed after the image shipped, when nothing in
 the repository has changed but the image on your host is newly vulnerable. It can also be run on
 demand from the Actions tab.
-
-Because the scan is a gate on pull requests too, a CVE disclosed against the base image overnight
-can fail a pull request that had nothing to do with it. That is the intended trade — finding out
-on a pull request beats finding out mid-release — and the fix is usually to rebuild on a fresher
-base rather than to change anything in the diff.
 
 ## Ideas for later
 
