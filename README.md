@@ -527,9 +527,9 @@ run. The workflow notices the release already exists and leaves your notes alone
 ### Vulnerability scanning
 
 Every image is scanned with [Trivy](https://github.com/aquasecurity/trivy) and the findings are
-uploaded to the repository's Security tab. The scan only reports: it never fails a pull request or
-blocks a release. The policy lives in one place — the `SCAN_SEVERITY` and `SCAN_VULN_TYPE`
-variables at the top of the workflow — so every scan reports against the same rules.
+uploaded to the repository's Security tab. The scan lives in its own workflow,
+`.github/workflows/trivy.yml`, and only reports: it never fails a pull request or blocks a release.
+The policy is the `SCAN_SEVERITY` and `SCAN_VULN_TYPE` variables at the top of that workflow.
 
 Two deliberate choices there:
 
@@ -545,10 +545,11 @@ The `Containerfile` is reproducible: the base image is pinned by digest and noth
 behind Debian's security archive, and the fix is the Dependabot pull request that bumps the
 `python:3.12-slim` digest, not a change to the `Containerfile`.
 
-The weekly run scans the *published* `:latest` image rather than a fresh build. That is the one
-thing a build-time scan cannot do: catch a CVE disclosed after the image shipped, when nothing in
-the repository has changed but the image on your host is newly vulnerable. It can also be run on
-demand from the Actions tab.
+Pull requests, `main` and release tags each get a scan of the image built from that commit. The
+weekly run scans the *published* `:latest` image instead, which catches a CVE disclosed after the
+image shipped, when nothing in the repository has changed. Its findings are filed under the
+release tag that image was built from (read from the image's OCI labels), not under `main`. It can
+also be run on demand from the Actions tab.
 
 ## Ideas for later
 
