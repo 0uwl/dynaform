@@ -73,7 +73,6 @@ class RadioGroup:
 
 @dataclass
 class ParsedTemplate:
-    source: str
     fields: list[FieldSpec]
     radio_groups: list[RadioGroup]
 
@@ -118,7 +117,7 @@ class _RefWalker:
     variables that actually reach the render, the way Jinja itself would.
 
     Two things Jinja's own ``find_undeclared_variables`` gets wrong for our
-    purposes, both worth the extra code (see HANDOFF.md):
+    purposes, both worth the extra code:
 
     * A ``{% block %}`` compiles as its own frame, so a name a template
       declares for itself at the top level (``{% set %}``, ``{% import %}``,
@@ -131,8 +130,8 @@ class _RefWalker:
       ``_effective_block_vars`` resolves each block name to whichever
       definition actually wins, chasing ``super()`` up the chain as needed.
 
-    What it deliberately leaves alone (also in HANDOFF.md, not a gap to
-    close later without a reason): stray output outside a child's blocks --
+    What it deliberately leaves alone (not a gap to close later without a
+    reason): stray output outside a child's blocks --
     over-collecting a field beats silently dropping one that does render, and
     a wrong rule here risks the latter; and a child ``{% set %}`` shadowing a
     name the base reads, which over-collects the same field instead of
@@ -150,7 +149,7 @@ class _RefWalker:
 
         names: set[str] = set()
         for level, template in enumerate(chain):
-            top = self._without_blocks(template)
+            top = self._isolate_block(template, None)
             names |= find_undeclared_variables(top)
             names |= self._collect_refs(top, path, depth + level)
 
@@ -207,22 +206,10 @@ class _RefWalker:
             current_depth += 1
             chain.append(current)
 
-    def _without_blocks(self, ast: nodes.Template) -> nodes.Template:
-        """A copy of `ast` with every block's body emptied.
-
-        What's left is exactly the content that isn't behind a (possibly
-        dead) block -- handled instead, correctly, by
-        ``_effective_block_vars``.
-        """
-        pruned = copy.deepcopy(ast)
-        pruned.environment = _ENV  # deepcopy would otherwise clone it too
-        for block in pruned.find_all(nodes.Block):
-            block.body = []
-        return pruned
-
-    def _isolate_block(self, ast: nodes.Template, name: str) -> nodes.Template:
+    def _isolate_block(self, ast: nodes.Template, name: str | None) -> nodes.Template:
         """A copy of `ast` with every block emptied except `name` and its
-        own ancestor blocks (a block nested inside another one).
+        own ancestor blocks (a block nested inside another one). With `name`
+        None every block is emptied, leaving only the top-level content.
 
         Keeping the rest of `ast` intact (its own top-level `{% set %}` /
         `{% import %}` / `{% extends %}`) is what lets ``super()`` and a
@@ -285,8 +272,8 @@ class _RefWalker:
             if ref.with_context:
                 names |= self.collect(target_ast, (*path, target), depth + 1)
             # else: resolved (so a missing one is still refused) but its
-            # variables are not fillable from this form -- see HANDOFF.md
-            # finding 5, "without context" is isolated from our context.
+            # variables are not fillable from this form: "without context"
+            # is isolated from our context.
         return names
 
     def _effective_block_vars(
@@ -413,4 +400,4 @@ def parse_template(
         group.options.sort(key=lambda item: item[0])
         group.options = [(option, label) for _pos, option, label in group.options]
 
-    return ParsedTemplate(source=source, fields=fields, radio_groups=radio_groups)
+    return ParsedTemplate(fields=fields, radio_groups=radio_groups)

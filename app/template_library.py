@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from flask import current_app
+from jinja2 import BaseLoader, TemplateNotFound
 
 SUFFIXES = frozenset({".j2", ".txt"})
 
@@ -18,7 +19,6 @@ SUFFIXES = frozenset({".j2", ".txt"})
 @dataclass(frozen=True)
 class LibraryTemplate:
     name: str  # path relative to the root; the <option> element value and lookup key
-    label: str  # what the <select> element shows
     path: Path  # absolute, already confirmed to live under the root
 
 
@@ -78,7 +78,7 @@ def _scan() -> list[LibraryTemplate]:
             except OSError:
                 continue
             name = path.relative_to(root).as_posix()
-            found.append(LibraryTemplate(name=name, label=name, path=resolved))
+            found.append(LibraryTemplate(name=name, path=resolved))
 
     found.sort(key=lambda template: template.name)
     return found
@@ -99,3 +99,27 @@ def read_template(name: str) -> str | None:
             except OSError:
                 return None
     return None
+
+
+# Resolves a referenced name ({% include %}, {% import %}, {% extends %}) the
+# same way read_template does, so unlike the picker it serves "_" partials.
+class LibraryLoader(BaseLoader):
+    """Serves templates from TEMPLATE_DIR by name, or refuses readably."""
+
+    def get_source(self, environment, template):
+        if library_root() is None:
+            raise TemplateNotFound(
+                template,
+                message=(
+                    f"this template refers to another template ({template}), "
+                    "but no template directory is configured. There is "
+                    "nothing to include, import or extend"
+                ),
+            )
+        source = read_template(template)
+        if source is None:
+            raise TemplateNotFound(
+                template,
+                message=f"referenced template not found in the directory: {template}",
+            )
+        return source, None, lambda: True
