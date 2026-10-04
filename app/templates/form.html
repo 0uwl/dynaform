@@ -27,10 +27,16 @@
   {% endfor %}
 {% endmacro %}
 
+{# Marks a conditional field's wrapper for conditional.js. #}
+{% macro parent_attrs(spec) -%}
+  {% if spec.parent %} data-parent="{{ spec.parent }}"
+    {%- if spec.show_when_unchecked %} data-show-when="unchecked"{% endif %} hidden{% endif %}
+{%- endmacro %}
+
 {% macro row(lst, row_form) %}
   <li class="border rounded p-3 mb-2">
     {% for spec in lst.fields %}
-      <div class="mb-3"{% if spec.parent %} data-parent="{{ spec.parent }}" hidden{% endif %}>
+      <div class="mb-3"{{ parent_attrs(spec) }}>
         {{- input(spec, row_form[spec.var_name]) -}}
       </div>
     {% endfor %}
@@ -49,7 +55,7 @@
 
         {% for item in items %}
           {% set spec = item.spec %}
-          <div class="mb-3"{% if spec.parent %} data-parent="{{ spec.parent }}" hidden{% endif %}>
+          <div class="mb-3"{{ parent_attrs(spec) }}>
 
             {% if item.kind == "radio" %}
               {% set bound = form["R_" + spec.name] %}

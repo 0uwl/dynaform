@@ -15,7 +15,7 @@ interface {{ interface.S_name }}
  switchport access vlan {{ interface.N_access_vlan_id | default(1) }}
 {%- else %}
  switchport mode trunk
- switchport trunk allowed vlan {{ interface.S_vlan_list }}
+ switchport trunk allowed vlan {{ interface.S_vlan_list | default(1) }}
 {%- endif %}
  switchport nonegotiate
 {%- endfor %}

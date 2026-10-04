@@ -459,3 +459,39 @@ class TestLists:
         )
         assert "location / {" in out and "127.0.0.1:3000" in out
         assert "location /api {" in out and "127.0.0.1:8080" in out
+
+
+class TestElseBranchFields:
+    def _parents(self, fields):
+        return {f.var_name: (f.parent, f.show_when_unchecked) for f in fields}
+
+    def test_else_only_field_is_shown_while_unchecked(self):
+        parsed = parse_template(
+            "{% if B_custom %}{{ S_custom_name }}{% else %}{{ S_preset }}{% endif %}{{ S_other }}"
+        )
+        assert self._parents(parsed.fields) == {
+            "B_custom": (None, False),
+            "S_custom_name": ("custom", False),
+            "S_preset": ("custom", True),
+            "S_other": (None, False),
+        }
+
+    @pytest.mark.parametrize("template", [
+        "{% if B_x %}a{% elif B_y %}b{% else %}{{ S_z }}{% endif %}",
+        "{% if not B_x %}a{% else %}{{ S_z }}{% endif %}",
+        "{% if B_x %}a{% else %}{{ S_z }}{% endif %}{{ S_z }}",
+    ])
+    def test_field_stays_unconditional_unless_else_runs_exactly_when_unticked(self, template):
+        parsed = parse_template(template)
+        assert self._parents(parsed.fields)["S_z"] == (None, False)
+
+    def test_row_else_field_hangs_off_its_rows_checkbox(self):
+        parsed = parse_template(
+            "{% for i in L_ports %}{% if i.B_access %}{{ i.N_vlan }}"
+            "{% else %}{{ i.S_vlan_list }}{% endif %}{% endfor %}"
+        )
+        assert self._parents(parsed.lists[0].fields) == {
+            "B_access": (None, False),
+            "N_vlan": (None, False),
+            "S_vlan_list": ("access", True),
+        }

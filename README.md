@@ -167,6 +167,23 @@ Admin: {{ S_admin_name }} / {{ P_admin_pass }}
 
 Ticking **Admin** unfolds the "Admin name" and "Admin pass" inputs.
 
+A field used only in the checkbox's `{% else %}` branch works the other way round: it is shown
+while the box is unticked and swapped out when it is ticked. It is optional too.
+
+```jinja
+{% if B_access %}
+switchport access vlan {{ N_access_vlan_id }}
+{% else %}
+switchport trunk allowed vlan {{ S_vlan_list }}
+{% endif %}
+```
+
+"Vlan list" shows until **Access** is ticked, then "Access vlan id" takes its place. This is read
+from the template's structure rather than the names, so it only applies when the else branch
+runs exactly when the box is unticked: the test is the checkbox alone (`{% if B_access %}`, not
+`{% if not B_access %}`), there is no `{% elif %}`, and the field isn't used anywhere outside that
+branch.
+
 ### Default values
 
 Give a variable a default with Jinja's own [`default`

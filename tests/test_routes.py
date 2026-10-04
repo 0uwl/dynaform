@@ -827,6 +827,15 @@ class TestLists:
         # Once in the starting row, once in the <template> row.
         assert page.count('data-parent="access" hidden') == 2
 
+    def test_else_row_field_is_marked_to_show_while_unchecked(self, client):
+        resp = client.post("/", data={
+            "template_text": "{% for i in L_ports %}{% if i.B_trunk %}{{ i.S_vlans }}"
+                             "{% else %}{{ i.N_vlan }}{% endif %}{% endfor %}",
+            "submit": "Parse template",
+        })
+        page = resp.data.decode()
+        assert page.count('data-parent="trunk" data-show-when="unchecked" hidden') == 2
+
     def test_list_only_template_is_accepted(self, client):
         resp = client.post("/", data={
             "template_text": "{% for u in L_users %}{{ u.S_name }}{% endfor %}",
