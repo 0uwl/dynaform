@@ -13,9 +13,11 @@ interface {{ interface.S_name }}
 {%- if interface.B_access %}
  switchport mode access
  switchport access vlan {{ interface.N_access_vlan_id | default(1) }}
+ spanning-tree portfast
 {%- else %}
  switchport mode trunk
- switchport trunk allowed vlan {{ interface.S_vlan_list | default(1) }}
+ switchport trunk allowed vlan {{ interface.S_trunk_vlan_list | default(1) }}
+ {% if interface.B_portfast_trunk %}spanning-tree portfast trunk{% endif %}
 {%- endif %}
  switchport nonegotiate
 {%- endfor %}
