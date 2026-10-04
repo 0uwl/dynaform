@@ -6,8 +6,9 @@ see README.md's "Reusing templates" section). Copy this whole directory's conten
 example refuses to parse.
 
 - **`nginx-site.j2`** -- extends `_base.j2`, which includes `_header.j2`. Demonstrates
-  `{% block %}` + `{{ super() }}`: the child adds an optional `/ws` location on top of the
-  base's own, rather than replacing it.
+  `{% block %}` + `{{ super() }}`: the child adds its own locations on top of the
+  base's, rather than replacing it -- any number from the `L_locations` list (path and port per
+  row), plus an optional `/ws` one.
 - **`systemd-service.j2`** -- imports `_macros.j2` with context and calls two macros, one of
   which reads a DynaForm variable directly from the caller's context rather than through a
   macro argument (only possible because the import is `with context`).
