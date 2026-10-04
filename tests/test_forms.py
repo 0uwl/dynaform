@@ -137,6 +137,13 @@ class TestLists:
             {"S_path": "/api", "N_port": 9000, "B_ssl": False},
         ]
 
+    def test_conditional_row_field_is_optional(self, app):
+        form_cls = build_dynamic_form(parse_template(
+            "{% for i in L_ports %}{{ i.B_access }}{{ i.N_access_vlan }}{% endfor %}"
+        ))
+        row_field = form_cls.row_forms["L_ports"].N_access_vlan
+        assert row_field.kwargs["validators"][0].__class__ is Optional
+
     def test_missing_required_row_field_fails(self, app):
         form, ok = self._form(app, {"template_source": "x", "L_locations-0-N_port": "1"})
         assert not ok

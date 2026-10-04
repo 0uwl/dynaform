@@ -415,6 +415,22 @@ class TestLists:
         [lst] = parsed.lists
         assert [f.var_name for f in lst.fields] == ["S_name", "B_admin"]
 
+    def test_row_fields_hang_off_a_checkbox_in_their_own_row(self):
+        parsed = parse_template(
+            "{{ B_access }}{{ S_access_note }}"
+            "{% for i in L_ports %}{{ i.B_access }}{{ i.N_access_vlan }}{{ i.S_name }}{% endfor %}"
+        )
+        assert {f.var_name: f.parent for f in parsed.fields} == {
+            "B_access": None, "S_access_note": "access",
+        }
+        assert {f.var_name: f.parent for f in parsed.lists[0].fields} == {
+            "B_access": None, "N_access_vlan": "access", "S_name": None,
+        }
+
+    def test_row_field_never_hangs_off_a_top_level_checkbox(self):
+        parsed = parse_template("{{ B_access }}{% for i in L_ports %}{{ i.N_access_vlan }}{% endfor %}")
+        assert parsed.lists[0].fields[0].parent is None
+
     def test_loop_helpers_are_allowed(self):
         parsed = parse_template(
             "{% for u in L_users %}{{ loop.index }} {{ u.S_name }}{% endfor %}"

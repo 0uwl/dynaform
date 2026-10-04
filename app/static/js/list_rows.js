@@ -20,6 +20,10 @@ document.addEventListener("DOMContentLoaded", () => {
       });
       next += 1;
       rows.append(row);
+      // Lets conditional.js show or hide the new row's conditional fields.
+      row.querySelectorAll('input[type="checkbox"]').forEach((box) => {
+        box.dispatchEvent(new Event("change", { bubbles: true }));
+      });
       row.querySelector("input")?.focus();
     });
 

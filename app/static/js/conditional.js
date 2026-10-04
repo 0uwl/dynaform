@@ -1,16 +1,27 @@
 // Show/hide fields whose wrapper has data-parent="<base>" based on the
-// checked state of the checkbox named "B_<base>". Native platform feature
-// (hidden attribute + change event) -- no framework needed.
+// checked state of the checkbox for "B_<base>". A top-level checkbox is named
+// "B_<base>"; one in a list row "L_x-<n>-B_<base>", and it only reaches the
+// fields of its own row. Listening on the document (not on each checkbox)
+// covers rows that list_rows.js adds later.
 document.addEventListener("DOMContentLoaded", () => {
-  function sync(base, checked) {
+  const CHECKBOX = /(?:^|-)B_(.+)$/;
+
+  function sync(checkbox) {
+    const base = checkbox.name.match(CHECKBOX)[1];
+    const row = checkbox.closest("li");
     document.querySelectorAll(`[data-parent="${base}"]`).forEach((el) => {
-      el.hidden = !checked;
+      if (el.closest("li") === row) el.hidden = !checkbox.checked;
     });
   }
 
-  document.querySelectorAll('input[type="checkbox"][name^="B_"]').forEach((checkbox) => {
-    const base = checkbox.name.slice(2);
-    sync(base, checkbox.checked);
-    checkbox.addEventListener("change", () => sync(base, checkbox.checked));
+  function isToggle(el) {
+    return el.matches('input[type="checkbox"]') && CHECKBOX.test(el.name);
+  }
+
+  document.querySelectorAll('input[type="checkbox"]').forEach((el) => {
+    if (isToggle(el)) sync(el);
+  });
+  document.addEventListener("change", (event) => {
+    if (isToggle(event.target)) sync(event.target);
   });
 });

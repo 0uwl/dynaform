@@ -818,6 +818,15 @@ class TestLists:
         assert 'data-next="1"' in page
         assert "list_rows.js" in page
 
+    def test_conditional_row_field_is_marked_for_js_toggle(self, client):
+        resp = client.post("/", data={
+            "template_text": "{% for i in L_ports %}{{ i.B_access }}{{ i.N_access_vlan }}{% endfor %}",
+            "submit": "Parse template",
+        })
+        page = resp.data.decode()
+        # Once in the starting row, once in the <template> row.
+        assert page.count('data-parent="access" hidden') == 2
+
     def test_list_only_template_is_accepted(self, client):
         resp = client.post("/", data={
             "template_text": "{% for u in L_users %}{{ u.S_name }}{% endfor %}",

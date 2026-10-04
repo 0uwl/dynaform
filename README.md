@@ -246,8 +246,11 @@ server {
 
 The form shows "Locations" with one row of "Path" and "Port", an **Add row** button and a
 **Remove** button on each row. Inside a row, `loc.N_port` and the top-level `N_port` are separate
-variables. Required fields and defaults work the same in a row as anywhere else, and a list can be
-emptied completely, in which case the loop simply renders nothing.
+variables. Required fields, defaults and [conditional fields](#conditional-fields) work the same
+in a row as anywhere else, and a list can be emptied completely, in which case the loop simply
+renders nothing. A row's checkbox only shows and hides fields in its own row: with
+`interface.B_access` and `interface.N_access_vlan_id`, ticking "Access" on one interface unfolds
+that interface's VLAN and no other.
 
 The rules are strict for now, and a template that breaks one is rejected with an error saying which:
 

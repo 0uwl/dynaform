@@ -207,6 +207,7 @@ def _list_specs(ast: nodes.Template, source: str, list_names: set[str]) -> list[
 
         if not fields:
             raise TemplateValidationError(f"List '{name}' has no fields to fill in.")
+        _assign_parents(list(fields.values()))
         rest = _NAME_RE.match(name).group("rest")
         specs.append(ListSpec(
             name=name,
@@ -215,6 +216,21 @@ def _list_specs(ast: nodes.Template, source: str, list_names: set[str]) -> list[
             fields=sorted(fields.values(), key=lambda f: f.source_pos),
         ))
     return sorted(specs, key=lambda l: l.source_pos)
+
+
+def _assign_parents(fields: list[FieldSpec]) -> list[str]:
+    """Conditional fields: a field is a child of checkbox B_<base> when its
+    own name starts with "<base>_". Longest base wins if several match.
+
+    Run once on the top-level fields and once per list row, so a row field
+    only ever hangs off a checkbox in its own row. Returns the bases found.
+    """
+    bases = [f.rest for f in fields if f.prefix == "B"]
+    for spec in fields:
+        if spec.prefix != "B":
+            candidates = [base for base in bases if spec.rest.startswith(base + "_")]
+            spec.parent = max(candidates, key=len) if candidates else None
+    return bases
 
 
 def _first_occurrence(name: str, source: str) -> int:
@@ -488,17 +504,7 @@ def parse_template(
                 )
             )
 
-    # Conditional fields: a field is a child of checkbox B_<base> when its
-    # own name starts with "<base>_". Longest base wins if several match.
-    checkbox_bases = [f.rest for f in fields if f.prefix == "B"]
-
-    def find_parent(rest: str) -> str | None:
-        candidates = [base for base in checkbox_bases if rest.startswith(base + "_")]
-        return max(candidates, key=len) if candidates else None
-
-    for spec in fields:
-        if spec.prefix != "B":
-            spec.parent = find_parent(spec.rest)
+    checkbox_bases = _assign_parents(fields)
     for group in groups.values():
         # A radio group's name never contains "_" (see _RADIO_RE), so it can
         # only ever be a *direct* child of a checkbox (R_admin_* under

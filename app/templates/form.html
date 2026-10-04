@@ -30,7 +30,9 @@
 {% macro row(lst, row_form) %}
   <li class="border rounded p-3 mb-2">
     {% for spec in lst.fields %}
-      <div class="mb-3">{{ input(spec, row_form[spec.var_name]) }}</div>
+      <div class="mb-3"{% if spec.parent %} data-parent="{{ spec.parent }}" hidden{% endif %}>
+        {{- input(spec, row_form[spec.var_name]) -}}
+      </div>
     {% endfor %}
     <button type="button" class="btn btn-outline-danger btn-sm" data-remove-row>Remove</button>
   </li>
