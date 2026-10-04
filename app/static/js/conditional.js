@@ -14,14 +14,11 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  function isToggle(el) {
-    return el.matches('input[type="checkbox"]') && CHECKBOX.test(el.name);
-  }
-
+  // Only a checkbox can have a name that matches CHECKBOX.
   document.querySelectorAll('input[type="checkbox"]').forEach((el) => {
-    if (isToggle(el)) sync(el);
+    if (CHECKBOX.test(el.name)) sync(el);
   });
   document.addEventListener("change", (event) => {
-    if (isToggle(event.target)) sync(event.target);
+    if (CHECKBOX.test(event.target.name)) sync(event.target);
   });
 });
