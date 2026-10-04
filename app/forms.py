@@ -105,7 +105,13 @@ def build_dynamic_form(parsed: ParsedTemplate) -> type[FlaskForm]:
     for lst in parsed.lists:
         # A plain Form, not a FlaskForm: the outer form's CSRF token covers
         # every row, and a nested one would demand a token per row.
-        row_form = type("RowForm", (Form,), {f.var_name: _field_for(f) for f in lst.fields})
+        row_fields = {f.var_name: _field_for(f) for f in lst.fields}
+        # An unticked checkbox submits nothing, and FieldList only builds
+        # the rows it sees keys for: a row of nothing but unticked B_ fields
+        # would vanish. This always-sent marker keeps it. The name can't
+        # clash with a template variable, which always has a prefix.
+        row_fields["present"] = HiddenField(default="1")
+        row_form = type("RowForm", (Form,), row_fields)
         attrs["row_forms"][lst.name] = row_form
         # FieldList drops indices past max_entries without a word, so it is
         # allowed one row too many for Length to turn into a visible error.

@@ -485,6 +485,16 @@ class TestElseBranchFields:
         parsed = parse_template(template)
         assert self._parents(parsed.fields)["S_z"] == (None, False)
 
+    def test_name_beats_an_enclosing_else(self):
+        parsed = parse_template(
+            "{% if B_dhcp %}x{% else %}{% if B_static %}{{ S_static_ip }}{% endif %}{% endif %}"
+        )
+        assert self._parents(parsed.fields) == {
+            "B_dhcp": (None, False),
+            "B_static": ("dhcp", True),
+            "S_static_ip": ("static", False),
+        }
+
     def test_row_else_field_hangs_off_its_rows_checkbox(self):
         parsed = parse_template(
             "{% for i in L_ports %}{% if i.B_access %}{{ i.N_vlan }}"

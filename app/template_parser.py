@@ -258,18 +258,23 @@ def _assign_parents(fields: list[FieldSpec], else_bases: dict[str, str]) -> list
     """Conditional fields: a field is a child of checkbox B_<base> when its
     own name starts with "<base>_". Longest base wins if several match. A
     field used only in the checkbox's {% else %} is a child too, shown while
-    the box is unticked instead (`else_bases`, from `_else_children`).
+    the box is unticked instead (`else_bases`, from `_else_children`), unless
+    its name already ties it to a checkbox.
 
     Run once on the top-level fields and once per list row, so a row field
     only ever hangs off a checkbox in its own row. Returns the bases found.
     """
     bases = [f.rest for f in fields if f.prefix == "B"]
     for spec in fields:
-        if spec.var_name in else_bases:
+        candidates = [] if spec.prefix == "B" else [
+            base for base in bases if spec.rest.startswith(base + "_")
+        ]
+        if candidates:
+            spec.parent = max(candidates, key=len)
+        elif spec.var_name in else_bases:
             spec.parent, spec.show_when_unchecked = else_bases[spec.var_name], True
-        elif spec.prefix != "B":
-            candidates = [base for base in bases if spec.rest.startswith(base + "_")]
-            spec.parent = max(candidates, key=len) if candidates else None
+        else:
+            spec.parent = None
     return bases
 
 
