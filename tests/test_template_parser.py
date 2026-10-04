@@ -380,3 +380,118 @@ class TestRadioDefaults:
         template = "{{ R_color_red }}{{ R_color_blue | default(true) }}"
         parsed = parse_template(template)
         assert parsed.radio_groups[0].options == [("red", "Red"), ("blue", "Blue")]
+
+
+class TestLists:
+    NGINX = (
+        "server {\n"
+        "    listen {{ N_port }};\n"
+        "{% for loc in L_locations %}\n"
+        "    location {{ loc.S_path }} {\n"
+        "        proxy_pass http://127.0.0.1:{{ loc.N_port | default(8080) }};\n"
+        "    }\n"
+        "{% endfor %}\n"
+        "}\n"
+    )
+
+    def test_list_fields_extracted_separately_from_top_level(self):
+        parsed = parse_template(self.NGINX)
+        assert [f.var_name for f in parsed.fields] == ["N_port"]
+        [lst] = parsed.lists
+        assert lst.name == "L_locations"
+        assert lst.label == "Locations"
+        assert [(f.var_name, f.prefix) for f in lst.fields] == [("S_path", "S"), ("N_port", "N")]
+
+    def test_row_default_is_read(self):
+        [lst] = parse_template(self.NGINX).lists
+        port = next(f for f in lst.fields if f.var_name == "N_port")
+        assert port.has_default and port.default == 8080
+
+    def test_two_loops_over_one_list_merge_fields(self):
+        parsed = parse_template(
+            "{% for a in L_users %}{{ a.S_name }}{% endfor %}"
+            "{% for b in L_users %}{{ b.S_name }}{{ b.B_admin }}{% endfor %}"
+        )
+        [lst] = parsed.lists
+        assert [f.var_name for f in lst.fields] == ["S_name", "B_admin"]
+
+    def test_row_fields_hang_off_a_checkbox_in_their_own_row(self):
+        parsed = parse_template(
+            "{{ B_access }}{{ S_access_note }}"
+            "{% for i in L_ports %}{{ i.B_access }}{{ i.N_access_vlan }}{{ i.S_name }}{% endfor %}"
+        )
+        assert {f.var_name: f.parent for f in parsed.fields} == {
+            "B_access": None, "S_access_note": "access",
+        }
+        assert {f.var_name: f.parent for f in parsed.lists[0].fields} == {
+            "B_access": None, "N_access_vlan": "access", "S_name": None,
+        }
+
+    def test_row_field_never_hangs_off_a_top_level_checkbox(self):
+        parsed = parse_template("{{ B_access }}{% for i in L_ports %}{{ i.N_access_vlan }}{% endfor %}")
+        assert parsed.lists[0].fields[0].parent is None
+
+    def test_loop_helpers_are_allowed(self):
+        parsed = parse_template(
+            "{% for u in L_users %}{{ loop.index }} {{ u.S_name }}{% endfor %}"
+        )
+        assert [f.var_name for f in parsed.lists[0].fields] == ["S_name"]
+
+    @pytest.mark.parametrize("template, message", [
+        ("{{ L_users | length }}{% for u in L_users %}{{ u.S_n }}{% endfor %}", "can only be used"),
+        ("{{ L_users }}", "can only be used"),
+        ("{% for u in L_users %}{{ u }}{% endfor %}", "not 'u' alone"),
+        ("{% for u in L_users %}{{ u.name }}{% endfor %}", "must start with"),
+        ("{% for u in L_users %}{{ u.R_role_admin }}{% endfor %}", "must start with"),
+        ("{% for u in L_users %}{{ u.L_keys }}{% endfor %}", "must start with"),
+        ("{% for a, b in L_users %}{{ a.S_n }}{% endfor %}", "single loop variable"),
+        ("{% for u in L_users %}static{% endfor %}", "no fields"),
+    ])
+    def test_rejects_unsupported_list_usage(self, template, message):
+        with pytest.raises(TemplateValidationError, match=message):
+            parse_template(template)
+
+    def test_rendered_output_matches_list_of_dicts(self):
+        # The context shape the form will eventually submit.
+        from jinja2.sandbox import SandboxedEnvironment
+        out = SandboxedEnvironment().from_string(self.NGINX).render(
+            N_port=80, L_locations=[{"S_path": "/", "N_port": 3000}, {"S_path": "/api"}],
+        )
+        assert "location / {" in out and "127.0.0.1:3000" in out
+        assert "location /api {" in out and "127.0.0.1:8080" in out
+
+
+class TestElseBranchFields:
+    def _parents(self, fields):
+        return {f.var_name: (f.parent, f.show_when_unchecked) for f in fields}
+
+    def test_else_only_field_is_shown_while_unchecked(self):
+        parsed = parse_template(
+            "{% if B_custom %}{{ S_custom_name }}{% else %}{{ S_preset }}{% endif %}{{ S_other }}"
+        )
+        assert self._parents(parsed.fields) == {
+            "B_custom": (None, False),
+            "S_custom_name": ("custom", False),
+            "S_preset": ("custom", True),
+            "S_other": (None, False),
+        }
+
+    @pytest.mark.parametrize("template", [
+        "{% if B_x %}a{% elif B_y %}b{% else %}{{ S_z }}{% endif %}",
+        "{% if not B_x %}a{% else %}{{ S_z }}{% endif %}",
+        "{% if B_x %}a{% else %}{{ S_z }}{% endif %}{{ S_z }}",
+    ])
+    def test_field_stays_unconditional_unless_else_runs_exactly_when_unticked(self, template):
+        parsed = parse_template(template)
+        assert self._parents(parsed.fields)["S_z"] == (None, False)
+
+    def test_row_else_field_hangs_off_its_rows_checkbox(self):
+        parsed = parse_template(
+            "{% for i in L_ports %}{% if i.B_access %}{{ i.N_vlan }}"
+            "{% else %}{{ i.S_vlan_list }}{% endif %}{% endfor %}"
+        )
+        assert self._parents(parsed.lists[0].fields) == {
+            "B_access": (None, False),
+            "N_vlan": (None, False),
+            "S_vlan_list": ("access", True),
+        }

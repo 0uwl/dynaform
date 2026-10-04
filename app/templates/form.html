@@ -1,14 +1,61 @@
 {% extends "base.html" %}
 {% block title %}Fill in template{% endblock %}
+
+{# One S_/P_/N_/B_ input, shared by top-level fields and list rows. #}
+{% macro input(spec, bound) %}
+  {% if spec.prefix == "B" %}
+    <div class="form-check">
+      {{ bound(class="form-check-input") }}
+      {{ bound.label(class="form-check-label") }}
+    </div>
+  {% else %}
+    {{ bound.label(class="form-label") }}
+    {{ bound(class="form-control" + (" is-invalid" if bound.errors else ""),
+              autocomplete=("off" if spec.prefix == "P" else "on")) }}
+    {# A template default arrives prefilled, so the value in the box is
+       the affordance -- except for a password, whose value WTForms
+       never renders. Say one is set rather than printing it on screen:
+       the field still works the same, and a shoulder does not read it. #}
+    {% if spec.has_default and spec.prefix == "P" %}
+      <div class="form-text">
+        The template sets a default for this field. Leave it blank to use that.
+      </div>
+    {% endif %}
+  {% endif %}
+  {% for error in bound.errors %}
+    <div class="invalid-feedback d-block">{{ error }}</div>
+  {% endfor %}
+{% endmacro %}
+
+{# Marks a conditional field's wrapper for conditional.js. #}
+{% macro parent_attrs(spec) -%}
+  {% if spec.parent %} data-parent="{{ spec.parent }}"
+    {%- if spec.show_when_unchecked %} data-show-when="unchecked"{% endif %} hidden{% endif %}
+{%- endmacro %}
+
+{% macro row(lst, row_form) %}
+  <li class="border rounded p-3 mb-2">
+    {% for spec in lst.fields %}
+      <div class="mb-3"{{ parent_attrs(spec) }}>
+        {{- input(spec, row_form[spec.var_name]) -}}
+      </div>
+    {% endfor %}
+    <button type="button" class="btn btn-outline-danger btn-sm" data-remove-row>Remove</button>
+  </li>
+{% endmacro %}
+
 {% block content %}
   <div class="row justify-content-center">
     <div class="col-lg-8">
+      <noscript>
+        <div class="alert alert-warning">This form needs JavaScript to add or remove list rows.</div>
+      </noscript>
       <form method="post" action="{{ url_for('dynaform.render') }}" novalidate>
         {{ form.hidden_tag() }}
 
         {% for item in items %}
           {% set spec = item.spec %}
-          <div class="mb-3"{% if spec.parent %} data-parent="{{ spec.parent }}" hidden{% endif %}>
+          <div class="mb-3"{{ parent_attrs(spec) }}>
 
             {% if item.kind == "radio" %}
               {% set bound = form["R_" + spec.name] %}
@@ -21,33 +68,34 @@
                   </div>
                 {% endfor %}
               </fieldset>
+              {% for error in bound.errors %}
+                <div class="invalid-feedback d-block">{{ error }}</div>
+              {% endfor %}
 
-            {% elif spec.prefix == "B" %}
-              {% set bound = form[spec.var_name] %}
-              <div class="form-check">
-                {{ bound(class="form-check-input") }}
-                {{ bound.label(class="form-check-label") }}
-              </div>
+            {% elif item.kind == "list" %}
+              {% set bound = form[spec.name] %}
+              {# data-next starts past the highest index in use: rows removed
+                 before a failed submit leave gaps, which FieldList accepts. #}
+              <fieldset data-list data-next="{{ bound.last_index + 1 }}">
+                <legend class="col-form-label">{{ spec.label }}</legend>
+                <ul class="list-unstyled mb-2" data-rows>
+                  {% for entry in bound %}{{ row(spec, entry.form) }}{% endfor %}
+                </ul>
+                {# "__INDEX__" is what list_rows.js swaps a real index into. The
+                   trailing "-" is explicit: WTForms only adds one to a prefix
+                   that doesn't already end in "_", and this one does. #}
+                <template>{{ row(spec, form.row_forms[spec.name](prefix=spec.name ~ "-__INDEX__-")) }}</template>
+                <button type="button" class="btn btn-outline-secondary btn-sm" data-add-row>Add row</button>
+                {# Row errors show on their own inputs; only the list's own
+                   (the row cap) are plain strings here. #}
+                {% for error in bound.errors if error is string %}
+                  <div class="invalid-feedback d-block">{{ error }}</div>
+                {% endfor %}
+              </fieldset>
 
             {% else %}
-              {% set bound = form[spec.var_name] %}
-              {{ bound.label(class="form-label") }}
-              {{ bound(class="form-control" + (" is-invalid" if bound.errors else ""),
-                        autocomplete=("off" if spec.prefix == "P" else "on")) }}
-              {# A template default arrives prefilled, so the value in the box is
-                 the affordance -- except for a password, whose value WTForms
-                 never renders. Say one is set rather than printing it on screen:
-                 the field still works the same, and a shoulder does not read it. #}
-              {% if spec.has_default and spec.prefix == "P" %}
-                <div class="form-text">
-                  The template sets a default for this field. Leave it blank to use that.
-                </div>
-              {% endif %}
+              {{ input(spec, form[spec.var_name]) }}
             {% endif %}
-
-            {% for error in bound.errors %}
-              <div class="invalid-feedback d-block">{{ error }}</div>
-            {% endfor %}
           </div>
         {% endfor %}
 
@@ -58,4 +106,5 @@
 {% endblock %}
 {% block scripts %}
   <script src="{{ url_for('static', filename='js/conditional.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/list_rows.js') }}"></script>
 {% endblock %}

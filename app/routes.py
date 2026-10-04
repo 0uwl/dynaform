@@ -17,11 +17,45 @@ _RENDER_ENV = SandboxedEnvironment(loader=LibraryLoader(), cache_size=0)
 
 
 def _ordered_items(parsed):
-    """Merge fields and radio groups into one list in template source order."""
+    """Merge fields, radio groups and lists into one list in template source order."""
     items = [("field", f.source_pos, f) for f in parsed.fields]
     items += [("radio", g.source_pos, g) for g in parsed.radio_groups]
+    items += [("list", lst.source_pos, lst) for lst in parsed.lists]
     items.sort(key=lambda item: item[1])
     return [{"kind": kind, "spec": spec} for kind, _pos, spec in items]
+
+
+def _values_for(specs, submitted):
+    """Turn submitted values into render context, keyed by variable name.
+
+    Shared by top-level fields and each row of an L_ list, where the row's
+    dict becomes ``loc`` in ``{% for loc in L_x %}``.
+    """
+    context = {}
+    for spec in specs:
+        value = submitted.get(spec.var_name)
+        current_app.logger.debug(f"  Retrieved a value for variable '{spec.var_name}'")
+
+        if spec.prefix != "B" and spec.has_default and value in (None, ""):
+            # Leave it undefined so Jinja's own `default` filter supplies
+            # the value, rather than substituting spec.default here. Both give
+            # the same output for this field (the filter is in the template
+            # and runs either way) but leaving it undefined is what bare
+            # Jinja does, so a variable used a second time *without* the filter
+            # renders empty here exactly as it would anywhere else.
+            #
+            # Checkboxes are excluded on purpose, an unchecked box submits
+            # nothing, so omitting it would let default(true) tick it back on
+            # and leave the user no way to turn it off. For B_ (and for radio
+            # groups below) a default can only mean the state the form starts
+            # in.
+            current_app.logger.debug(f"  Leaving '{spec.var_name}' to its template default")
+            continue
+
+        if value is None:
+            value = False if spec.prefix == "B" else ""
+        context[spec.var_name] = value
+    return context
 
 
 @bp.route("/", methods=["GET"])
@@ -83,14 +117,18 @@ def parse():
         flash(str(exc), "danger")
         return render_template("index.html", form=UploadForm()), 400
 
-    if not parsed.fields and not parsed.radio_groups:
+    if not parsed.fields and not parsed.radio_groups and not parsed.lists:
         current_app.logger.warning("Template does not contain any valid variables")
-        flash("Template has no DynaForm variables (S_/P_/N_/B_/R_) to fill in.", "warning")
+        flash("Template has no DynaForm variables (S_/P_/N_/B_/R_/L_) to fill in.", "warning")
         return render_template("index.html", form=UploadForm()), 400
 
-    current_app.logger.info(f"Template accepted: {len(parsed.fields)} field(s), {len(parsed.radio_groups)} radio group(s)")
+    current_app.logger.info(f"Template accepted: {len(parsed.fields)} field(s), {len(parsed.radio_groups)} radio group(s), {len(parsed.lists)} list(s)")
 
     dynamic_form = build_dynamic_form(parsed)(formdata=None, template_source=source)
+    # One row to start from; a list may still be emptied and submitted with
+    # none, so this is not a min_entries.
+    for lst in parsed.lists:
+        getattr(dynamic_form, lst.name).append_entry()
     return render_template("form.html", form=dynamic_form, items=_ordered_items(parsed))
 
 
@@ -139,30 +177,12 @@ def render():
         return render_template("form.html", form=dynamic_form, items=_ordered_items(parsed)), 400
 
     current_app.logger.info("Retrieving data from dynamic form")
-    context = {}
-    for spec in parsed.fields:
-        value = getattr(dynamic_form, spec.var_name).data
-        current_app.logger.debug(f"  Retrieved a value for variable '{spec.var_name}'")
+    context = _values_for(parsed.fields, dynamic_form.data)
 
-        if spec.prefix != "B" and spec.has_default and value in (None, ""):
-            # Leave it undefined so Jinja's own `default` filter supplies
-            # the value, rather than substituting spec.default here. Both give
-            # the same output for this field (the filter is in the template
-            # and runs either way) but leaving it undefined is what bare
-            # Jinja does, so a variable used a second time *without* the filter
-            # renders empty here exactly as it would anywhere else.
-            #
-            # Checkboxes are excluded on purpose, an unchecked box submits
-            # nothing, so omitting it would let default(true) tick it back on
-            # and leave the user no way to turn it off. For B_ (and for radio
-            # groups below) a default can only mean the state the form starts
-            # in.
-            current_app.logger.debug(f"  Leaving '{spec.var_name}' to its template default")
-            continue
-
-        if value is None:
-            value = False if spec.prefix == "B" else ""
-        context[spec.var_name] = value
+    for lst in parsed.lists:
+        rows = getattr(dynamic_form, lst.name).data
+        current_app.logger.debug(f"  Retrieved {len(rows)} row(s) for list '{lst.name}'")
+        context[lst.name] = [_values_for(lst.fields, row) for row in rows]
 
     for group in parsed.radio_groups:
         selected = getattr(dynamic_form, "R_" + group.name).data

@@ -1,0 +1,23 @@
+hostname {{ S_hostname }}
+
+ip domain name {{ S_domain_name }}
+{%- for vlan in L_vlans %}
+
+vlan {{ vlan.N_vlan_id }}
+ name {{ vlan.S_vlan_name }}
+{%- endfor %}
+{%- for interface in L_interfaces %}
+
+interface {{ interface.S_name }}
+ description {{ interface.S_description }}
+{%- if interface.B_access %}
+ switchport mode access
+ switchport access vlan {{ interface.N_access_vlan_id | default(1) }}
+ spanning-tree portfast
+{%- else %}
+ switchport mode trunk
+ switchport trunk allowed vlan {{ interface.S_trunk_vlan_list | default(1) }}
+ {% if interface.B_portfast_trunk %}spanning-tree portfast trunk{% endif %}
+{%- endif %}
+ switchport nonegotiate
+{%- endfor %}
