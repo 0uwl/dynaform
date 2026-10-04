@@ -795,3 +795,61 @@ class TestOwnJinjaLogic:
         resp = self._parse(client, "{{ mystery }}{{ S_name }}")
         assert resp.status_code == 400
         assert b"Unrecognized variable" in resp.data
+
+
+class TestLists:
+    TEMPLATE = (
+        "listen {{ N_port }};\n"
+        "{% for loc in L_locations %}"
+        "location {{ loc.S_path }} -> {{ loc.N_port | default(8080) }};\n"
+        "{% endfor %}"
+    )
+
+    def _parse(self, client):
+        resp = client.post("/", data={"template_text": self.TEMPLATE, "submit": "Parse template"})
+        return resp, _extract(resp.data.decode(), "template_source")
+
+    def test_form_starts_with_one_row_and_a_blank_template_row(self, client):
+        resp, _source = self._parse(client)
+        page = resp.data.decode()
+        assert resp.status_code == 200
+        assert 'name="L_locations-0-S_path"' in page
+        assert 'name="L_locations-__INDEX__-S_path"' in page
+        assert 'data-next="1"' in page
+        assert "list_rows.js" in page
+
+    def test_list_only_template_is_accepted(self, client):
+        resp = client.post("/", data={
+            "template_text": "{% for u in L_users %}{{ u.S_name }}{% endfor %}",
+            "submit": "Parse template",
+        })
+        assert resp.status_code == 200
+
+    def test_rows_render_as_a_list_of_records(self, client):
+        _resp, source = self._parse(client)
+        resp = client.post("/render", data={
+            "template_source": source,
+            "N_port": "80",
+            "L_locations-0-S_path": "/",
+            "L_locations-0-N_port": "3000",
+            # A gap, as left by removing row 1 in the browser.
+            "L_locations-2-S_path": "/api",
+            "submit": "Render template",
+        })
+        out = resp.data.decode()
+        assert resp.status_code == 200
+        assert "location / -&gt; 3000;" in out
+        assert "location /api -&gt; 8080;" in out
+
+    def test_invalid_row_redisplays_with_its_index_kept(self, client):
+        _resp, source = self._parse(client)
+        resp = client.post("/render", data={
+            "template_source": source,
+            "N_port": "80",
+            "L_locations-4-N_port": "not a number",
+            "submit": "Render template",
+        })
+        page = resp.data.decode()
+        assert resp.status_code == 400
+        assert 'name="L_locations-4-S_path"' in page
+        assert 'data-next="5"' in page

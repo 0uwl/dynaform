@@ -109,3 +109,53 @@ class TestValidation:
             form = build_dynamic_form(parsed)()
             assert form.validate() is False
             assert "N_age" in form.errors
+
+
+class TestLists:
+    TEMPLATE = (
+        "{% for loc in L_locations %}"
+        "{{ loc.S_path }} {{ loc.N_port | default(80) }} {{ loc.B_ssl }}"
+        "{% endfor %}"
+    )
+
+    def _form(self, app, data):
+        from werkzeug.datastructures import MultiDict
+        form_cls = build_dynamic_form(parse_template(self.TEMPLATE))
+        with app.test_request_context(method="POST", data=MultiDict(data)):
+            form = form_cls()
+            return form, form.validate()
+
+    def test_rows_validate_with_the_same_rules_as_top_level_fields(self, app):
+        form, ok = self._form(app, {
+            "template_source": "x",
+            "L_locations-0-S_path": "/", "L_locations-0-N_port": "",
+            "L_locations-3-S_path": "/api", "L_locations-3-N_port": "9000",
+        })
+        assert ok, form.errors
+        assert form.L_locations.data == [
+            {"S_path": "/", "N_port": None, "B_ssl": False},
+            {"S_path": "/api", "N_port": 9000, "B_ssl": False},
+        ]
+
+    def test_missing_required_row_field_fails(self, app):
+        form, ok = self._form(app, {"template_source": "x", "L_locations-0-N_port": "1"})
+        assert not ok
+        assert "S_path" in form.L_locations.entries[0].errors
+
+    def test_zero_rows_is_a_valid_empty_list(self, app):
+        form, ok = self._form(app, {"template_source": "x"})
+        assert ok and form.L_locations.data == []
+
+    def test_row_count_is_capped_with_a_visible_error(self, app):
+        from app.forms import MAX_LIST_ROWS
+        data = {f"L_locations-{i}-S_path": "/" for i in range(MAX_LIST_ROWS + 5)}
+        form, ok = self._form(app, {"template_source": "x", **data})
+        assert not ok
+        assert f"At most {MAX_LIST_ROWS} rows." in form.L_locations.errors
+
+    def test_blank_row_carries_the_placeholder_index(self, app):
+        form_cls = build_dynamic_form(parse_template(self.TEMPLATE))
+        with app.test_request_context():
+            row = form_cls(formdata=None).row_forms["L_locations"](prefix="L_locations-__INDEX__-")
+            assert row.S_path.name == "L_locations-__INDEX__-S_path"
+            assert row.N_port.data == 80

@@ -4,6 +4,8 @@ Syntax: every undeclared template variable must
 be named ``<PREFIX>_<NAME>`` where <PREFIX> is one of S/P/N/B/R (text /
 password / number / checkbox / radio). Radio variables are further named
 ``R_<group>_<option>`` and are grouped into one radio-button set per group.
+``L_<name>`` is a repeatable list, iterated as ``{% for x in L_name %}`` with
+its row fields read as ``x.S_path``, ``x.N_port`` and so on.
 
 A template may also reuse others via ``{% extends %}``, ``{% include %}``,
 ``{% import %}`` and ``{% from ... import %}``. Resolving *what those refer
@@ -32,7 +34,7 @@ MAX_TEMPLATES_REFERENCED = 50
 
 _REF_NODE_TYPES = (nodes.Include, nodes.Import, nodes.FromImport)
 
-_NAME_RE = re.compile(r"^(?P<prefix>[SPNBR])_(?P<rest>[A-Za-z][A-Za-z0-9_]*)$")
+_NAME_RE = re.compile(r"^(?P<prefix>[SPNBRL])_(?P<rest>[A-Za-z][A-Za-z0-9_]*)$")
 _RADIO_RE = re.compile(r"^(?P<group>[A-Za-z0-9]+)_(?P<option>[A-Za-z][A-Za-z0-9_]*)$")
 
 
@@ -72,9 +74,18 @@ class RadioGroup:
 
 
 @dataclass
+class ListSpec:
+    name: str  # the full variable, e.g. "L_locations"
+    label: str
+    source_pos: int
+    fields: list[FieldSpec]  # one row's fields
+
+
+@dataclass
 class ParsedTemplate:
     fields: list[FieldSpec]
     radio_groups: list[RadioGroup]
+    lists: list[ListSpec]
 
 
 def _label_for(rest: str) -> str:
@@ -82,7 +93,10 @@ def _label_for(rest: str) -> str:
     return " ".join([first.capitalize(), *others])
 
 
-def _defaults_in(ast: nodes.Node) -> tuple[dict[str, str | int | float | bool], set[str]]:
+def _defaults_in(
+    ast: nodes.Node,
+    key: Callable[[nodes.Node], str | None] = lambda n: n.name if isinstance(n, nodes.Name) else None,
+) -> tuple[dict[str, str | int | float | bool], set[str]]:
     """Find the variables carrying a ``default`` filter, and its literal value.
 
     Returns the literals keyed by variable, and the names of *every* variable
@@ -95,16 +109,112 @@ def _defaults_in(ast: nodes.Node) -> tuple[dict[str, str | int | float | bool], 
     The first literal for a variable wins. 
     Note: Jinja applies each occurrence independently, so a template with two
     different defaults for one variable renders both.
+
+    `key` names the variable a filtered node stands for, or None to skip it;
+    list rows pass one that reads ``loc.S_x`` as ``S_x``.
     """
     literals: dict[str, str | int | float | bool] = {}
     defaulted: set[str] = set()
     for node in ast.find_all(nodes.Filter):
-        if node.name not in _DEFAULT_FILTERS or not isinstance(node.node, nodes.Name):
+        name = key(node.node)
+        if node.name not in _DEFAULT_FILTERS or name is None:
             continue
-        defaulted.add(node.node.name)
+        defaulted.add(name)
         if node.args and isinstance(node.args[0], nodes.Const):
-            literals.setdefault(node.node.name, node.args[0].value)
+            literals.setdefault(name, node.args[0].value)
     return literals, defaulted
+
+
+# Prefixes a list row may hold. Radio groups span several variables and lists
+# nest awkwardly, so both stay out of rows until there is a reason for them.
+_ROW_PREFIXES = frozenset("SPNB")
+
+
+def _list_specs(ast: nodes.Template, source: str, list_names: set[str]) -> list[ListSpec]:
+    """Collect the row fields of every ``L_`` list from its ``for`` loops.
+
+    Strict on purpose: the list may only appear as a loop's iterable, and the
+    loop variable only as ``x.<FIELD>``. Anything else (``L_x | length``, a
+    bare ``{{ x }}``, a tuple target) is refused rather than guessed at.
+
+    ponytail: only the top template is searched, like `_defaults_in`; a list
+    looped over inside an include/extends target is refused, not followed.
+    """
+    loops: dict[str, list[nodes.For]] = {name: [] for name in list_names}
+    for loop in ast.find_all(nodes.For):
+        if isinstance(loop.iter, nodes.Name) and loop.iter.name in loops:
+            loops[loop.iter.name].append(loop)
+
+    iterables = {id(loop.iter) for found in loops.values() for loop in found}
+    for name_node in ast.find_all(nodes.Name):
+        if name_node.name in loops and id(name_node) not in iterables:
+            raise TemplateValidationError(
+                f"List '{name_node.name}' can only be used as "
+                f"{{% for x in {name_node.name} %}}."
+            )
+
+    specs: list[ListSpec] = []
+    for name, found in loops.items():
+        if not found:
+            raise TemplateValidationError(
+                f"List '{name}' must be looped over in this template itself."
+            )
+        fields: dict[str, FieldSpec] = {}
+        for loop in found:
+            if not isinstance(loop.target, nodes.Name):
+                raise TemplateValidationError(
+                    f"Loop over '{name}' must use a single loop variable."
+                )
+            target = loop.target.name
+            body = nodes.Template(loop.body)
+
+            attrs = [
+                g for g in body.find_all(nodes.Getattr)
+                if isinstance(g.node, nodes.Name) and g.node.name == target
+            ]
+            attr_ids = {id(g.node) for g in attrs}
+            getattr_ids = {id(g) for g in attrs}
+            if any(
+                n.name == target and n.ctx == "load" and id(n) not in attr_ids
+                for n in body.find_all(nodes.Name)
+            ):
+                raise TemplateValidationError(
+                    f"Inside the loop over '{name}', use '{target}.<FIELD>' "
+                    f"(for example '{target}.S_name'), not '{target}' alone."
+                )
+
+            row_defaults, defaulted = _defaults_in(
+                body, key=lambda n: n.attr if id(n) in getattr_ids else None
+            )
+
+            for g in attrs:
+                match = _NAME_RE.match(g.attr)
+                if not match or match.group("prefix") not in _ROW_PREFIXES:
+                    raise TemplateValidationError(
+                        f"List field '{target}.{g.attr}' must start with "
+                        "S_, P_, N_, or B_."
+                    )
+                spec = fields.setdefault(g.attr, FieldSpec(
+                    var_name=g.attr,
+                    prefix=match.group("prefix"),
+                    rest=match.group("rest"),
+                    label=_label_for(match.group("rest")),
+                    source_pos=_first_occurrence(f"{target}.{g.attr}", source),
+                ))
+                spec.has_default |= g.attr in defaulted
+                if spec.default is None:
+                    spec.default = row_defaults.get(g.attr)
+
+        if not fields:
+            raise TemplateValidationError(f"List '{name}' has no fields to fill in.")
+        rest = _NAME_RE.match(name).group("rest")
+        specs.append(ListSpec(
+            name=name,
+            label=_label_for(rest),
+            source_pos=_first_occurrence(name, source),
+            fields=sorted(fields.values(), key=lambda f: f.source_pos),
+        ))
+    return sorted(specs, key=lambda l: l.source_pos)
 
 
 def _first_occurrence(name: str, source: str) -> int:
@@ -322,8 +432,12 @@ def parse_template(
         raise TemplateValidationError(
             "Unrecognized variable name(s): "
             + ", ".join(invalid)
-            + ". Every variable must start with S_, P_, N_, B_, or R_."
+            + ". Every variable must start with S_, P_, N_, B_, R_, or L_."
         )
+
+    list_names = {n for n in names if n.startswith("L_")}
+    lists = _list_specs(ast, source, list_names)
+    names -= list_names
 
     defaults, defaulted = _defaults_in(ast)
 
@@ -400,4 +514,4 @@ def parse_template(
         group.options.sort(key=lambda item: item[0])
         group.options = [(option, label) for _pos, option, label in group.options]
 
-    return ParsedTemplate(fields=fields, radio_groups=radio_groups)
+    return ParsedTemplate(fields=fields, radio_groups=radio_groups, lists=lists)

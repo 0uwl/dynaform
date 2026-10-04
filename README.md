@@ -32,6 +32,7 @@ a variable that doesn't match is rejected with an error naming the offending var
 | `N_`   | number     | `N_user_age`   |
 | `B_`   | checkbox   | `B_admin`      |
 | `R_`   | radio      | `R_color_red`  |
+| `L_`   | list of rows | `L_locations` |
 
 Labels are derived from the name: the prefix is dropped, underscores become spaces, and only the
 first word is capitalized (`N_user_age` -> "User age"). Fields appear in the order the variables
@@ -226,6 +227,39 @@ would have to rotate if it leaked — type those in instead.
 Before this existed, `default` in a DynaForm template did nothing: every variable was passed to
 the renderer whether or not its field was filled in, and the filter only fires on variables that
 are *undefined*. Such templates now behave as they read. Worth a look if you have any.
+
+### Lists
+
+An `L_` variable is a list the form lets you grow: each row is a small group of fields, and the
+template loops over the rows. Read each row's fields off the loop variable:
+
+```jinja
+server {
+    listen {{ N_port }};
+{% for loc in L_locations %}
+    location {{ loc.S_path }} {
+        proxy_pass http://127.0.0.1:{{ loc.N_port | default(8080) }};
+    }
+{% endfor %}
+}
+```
+
+The form shows "Locations" with one row of "Path" and "Port", an **Add row** button and a
+**Remove** button on each row. Inside a row, `loc.N_port` and the top-level `N_port` are separate
+variables. Required fields and defaults work the same in a row as anywhere else, and a list can be
+emptied completely, in which case the loop simply renders nothing.
+
+The rules are strict for now, and a template that breaks one is rejected with an error saying which:
+
+- The list may only appear as `{% for x in L_name %}`: no `{{ L_name | length }}`, no
+  `{% if L_name %}`.
+- Inside the loop, use `x.<FIELD>`, never `x` on its own.
+- Row fields are `S_`, `P_`, `N_` or `B_`. Radio groups and lists inside a row aren't supported.
+- The loop has to be in the template itself, not in an `{% include %}`d or `{% extends %}`ed one.
+- A list takes at most 100 rows.
+
+Adding and removing rows needs JavaScript. DynaForm is meant for internal use, so it doesn't
+provide a fallback for that.
 
 ## Template directory
 
@@ -550,32 +584,6 @@ weekly run scans the *published* `:latest` image instead, which catches a CVE di
 image shipped, when nothing in the repository has changed. Its findings are filed under the
 release tag that image was built from (read from the image's OCI labels), not under `main`. It can
 also be run on demand from the Actions tab.
-
-## Ideas for later
-
-Not committed to or designed; written down so the reasoning survives.
-
-### An `L_` prefix for repeatable elements
-
-A list of things — server names, users, ports — where one form field is not enough and the
-template wants to loop:
-
-```jinja
-{% for server in L_servers %}
-    server {{ server }};
-{% endfor %}
-```
-
-Deferred rather than designed. The questions to answer when it comes back:
-
-- **What is an element?** A list of plain strings is a much smaller feature than a list of records
-  with their own sub-fields, which needs nested field specs and nested labels.
-- **How does the parser know?** `L_servers` is iterated, not printed, so the prefix has to be
-  taught to `_NAME_RE` and `FIELD_CLASSES`, and the "every variable is one input" assumption in
-  the form builder stops holding.
-- **How does it look without JavaScript?** Adding and removing rows wants scripting, and this app
-  has kept every feature working without it. WTForms' `FieldList`/`FormField` already map onto the
-  flat `L_servers-0`, `L_servers-1` encoding, so the server side is the easy half.
 
 ## Contributing
 

@@ -5,6 +5,9 @@ from flask_wtf import FlaskForm
 from flask_wtf.file import FileAllowed, FileField
 from wtforms import (
     BooleanField,
+    FieldList,
+    Form,
+    FormField,
     HiddenField,
     IntegerField,
     PasswordField,
@@ -14,10 +17,10 @@ from wtforms import (
     SubmitField,
     TextAreaField,
 )
-from wtforms.validators import InputRequired, Optional
+from wtforms.validators import InputRequired, Length, Optional
 
 from .template_library import list_templates
-from .template_parser import ParsedTemplate
+from .template_parser import FieldSpec, ParsedTemplate
 
 FIELD_CLASSES = {
     "S": StringField,
@@ -25,6 +28,10 @@ FIELD_CLASSES = {
     "N": IntegerField,
     "B": BooleanField,
 }
+
+# Rows a single L_ list accepts. The browser adds rows freely, so the server
+# is what keeps a crafted POST from asking for thousands of them.
+MAX_LIST_ROWS = 100
 
 
 class UploadForm(FlaskForm):
@@ -48,6 +55,29 @@ class UploadForm(FlaskForm):
         ]
 
 
+def _field_for(spec: FieldSpec):
+    field_cls = FIELD_CLASSES[spec.prefix]
+    if spec.prefix == "B":
+        validators = []
+    elif spec.parent is not None:
+        # Conditional children are Optional rather than
+        # cross-validated against their parent checkbox's state. Add
+        # server-side "required if parent checked" if that's ever needed.
+        validators = [Optional()]
+    elif spec.has_default:
+        # A default makes the field optional by implication: submitting it
+        # blank is how you ask for the default, so it cannot also be
+        # required. Nothing in the template says so, which is why the
+        # README spells it out.
+        validators = [Optional()]
+    else:
+        validators = [InputRequired()]
+    # default=None is what WTForms already assumes, so an undefaulted
+    # field is built exactly as before. A PasswordField never renders its
+    # value, so a P_ default prefills without reaching the markup.
+    return field_cls(spec.label, validators=validators, default=spec.default)
+
+
 def build_dynamic_form(parsed: ParsedTemplate) -> type[FlaskForm]:
     """Build a FlaskForm subclass with one field per template variable.
 
@@ -57,29 +87,12 @@ def build_dynamic_form(parsed: ParsedTemplate) -> type[FlaskForm]:
     attrs: dict[str, object] = {
         "template_source": HiddenField(validators=[InputRequired()]),
         "submit": SubmitField("Render template"),
+        # Each list's row class, for the blank row form.html puts in a <template>.
+        "row_forms": {},
     }
 
     for spec in parsed.fields:
-        field_cls = FIELD_CLASSES[spec.prefix]
-        if spec.prefix == "B":
-            validators = []
-        elif spec.parent is not None:
-            # Conditional children are Optional rather than
-            # cross-validated against their parent checkbox's state. Add
-            # server-side "required if parent checked" if that's ever needed.
-            validators = [Optional()]
-        elif spec.has_default:
-            # A default makes the field optional by implication: submitting it
-            # blank is how you ask for the default, so it cannot also be
-            # required. Nothing in the template says so, which is why the
-            # README spells it out.
-            validators = [Optional()]
-        else:
-            validators = [InputRequired()]
-        # default=None is what WTForms already assumes, so an undefaulted
-        # field is built exactly as before. A PasswordField never renders its
-        # value, so a P_ default prefills without reaching the markup.
-        attrs[spec.var_name] = field_cls(spec.label, validators=validators, default=spec.default)
+        attrs[spec.var_name] = _field_for(spec)
 
     for group in parsed.radio_groups:
         validators = [Optional()] if group.parent is not None else [InputRequired()]
@@ -87,6 +100,20 @@ def build_dynamic_form(parsed: ParsedTemplate) -> type[FlaskForm]:
         # InputRequired: the default cannot make it fail.
         attrs["R_" + group.name] = RadioField(
             group.label, choices=group.options, validators=validators, default=group.default
+        )
+
+    for lst in parsed.lists:
+        # A plain Form, not a FlaskForm: the outer form's CSRF token covers
+        # every row, and a nested one would demand a token per row.
+        row_form = type("RowForm", (Form,), {f.var_name: _field_for(f) for f in lst.fields})
+        attrs["row_forms"][lst.name] = row_form
+        # FieldList drops indices past max_entries without a word, so it is
+        # allowed one row too many for Length to turn into a visible error.
+        attrs[lst.name] = FieldList(
+            FormField(row_form),
+            lst.label,
+            validators=[Length(max=MAX_LIST_ROWS, message=f"At most {MAX_LIST_ROWS} rows.")],
+            max_entries=MAX_LIST_ROWS + 1,
         )
 
     return type("DynamicForm", (FlaskForm,), attrs)
