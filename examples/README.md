@@ -13,8 +13,8 @@ partials refuses to parse if one is left behind.
   which reads a DynaForm variable directly from the caller's context rather than through a
   macro argument (only possible because the import is `with context`).
 - **`iosxe-config.j2`** -- standalone, no partials. Demonstrates `L_` lists: VLANs and
-  interfaces are each a list of rows, and every interface row chooses access or trunk. A trunk's
-  allowed VLANs come from looping over `L_vlans` again inside the interface loop.
+  interfaces are each a list of rows, and every interface row chooses access or trunk. Ticking
+  "Access" unfolds that row's own access VLAN; a trunk takes its allowed VLANs as typed text.
 
 `_base.j2`, `_header.j2` and `_macros.j2` start with `_`, so they won't show up in the picker
 themselves, only the templates above do.
