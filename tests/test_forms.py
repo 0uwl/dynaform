@@ -133,8 +133,8 @@ class TestLists:
         })
         assert ok, form.errors
         assert form.L_locations.data == [
-            {"S_path": "/", "N_port": None, "B_ssl": False},
-            {"S_path": "/api", "N_port": 9000, "B_ssl": False},
+            {"S_path": "/", "N_port": None, "B_ssl": False, "present": "1"},
+            {"S_path": "/api", "N_port": 9000, "B_ssl": False, "present": "1"},
         ]
 
     def test_conditional_row_field_is_optional(self, app):

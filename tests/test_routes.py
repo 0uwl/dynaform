@@ -859,6 +859,23 @@ class TestLists:
         assert "location / -&gt; 3000;" in out
         assert "location /api -&gt; 8080;" in out
 
+    def test_row_of_unticked_checkboxes_is_kept(self, client):
+        resp = client.post("/", data={
+            "template_text": "{% for r in L_x %}[{{ r.B_a }}]{% endfor %}",
+            "submit": "Parse template",
+        })
+        page = resp.data.decode()
+        assert 'name="L_x-0-present"' in page
+        resp = client.post("/render", data={
+            "template_source": _extract(page, "template_source"),
+            "L_x-0-present": "1",
+            "L_x-1-present": "1",
+            "L_x-1-B_a": "y",
+            "submit": "Render template",
+        })
+        assert resp.status_code == 200
+        assert "[False][True]" in resp.data.decode()
+
     def test_invalid_row_redisplays_with_its_index_kept(self, client):
         _resp, source = self._parse(client)
         resp = client.post("/render", data={

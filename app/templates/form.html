@@ -35,6 +35,7 @@
 
 {% macro row(lst, row_form) %}
   <li class="border rounded p-3 mb-2">
+    {{ row_form.present() }}
     {% for spec in lst.fields %}
       <div class="mb-3"{{ parent_attrs(spec) }}>
         {{- input(spec, row_form[spec.var_name]) -}}
