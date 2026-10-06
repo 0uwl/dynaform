@@ -19,29 +19,24 @@ on:
 permissions:
   contents: read
 
-env:
-  # Single source of truth for lint/test's setup-python step, so the
-  # interpreter version can't drift between the two jobs that use it.
-  PYTHON_VERSION: '3.12'
-
 jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      # uv reads the interpreter version from .python-version, the single
+      # source of truth for both jobs and for local development. The uv
+      # version is pinned to match the Containerfile's uv image.
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: pip
-      # Pinned, for the same reason requirements.txt is pinned: an unpinned
-      # linter changes what it enforces without a commit, so it can fail CI on
-      # an unchanged codebase. ruff 0.16 widened its DEFAULT rule set (isort,
-      # part of pylint) over 0.15, which is exactly that failure mode. Bumping
-      # this is a deliberate change with its own diff.
-      - run: pip install ruff==0.16.7
+          version: '0.12.23'
+          enable-cache: true
+      # --locked fails if uv.lock is stale against pyproject.toml. ruff is
+      # pinned in the dev group there; see the comment beside it.
+      - run: uv sync --locked
       - name: Ruff (Python)
-        run: ruff check .
+        run: uv run ruff check .
       # image-tag is the load-bearing pin here, not the `@` ref: the action is
       # a thin wrapper that runs `ghcr.io/immanuwell/droast:${image-tag}`, and
       # that input defaults to `latest`. Left unset, the Containerfile linter
@@ -60,15 +55,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      # uv reads the interpreter version from .python-version, the single
+      # source of truth for both jobs and for local development. The uv
+      # version is pinned to match the Containerfile's uv image.
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: pip
-      # requirements-dev.txt pulls in requirements.txt and adds pytest, so this
-      # is the one install the test job needs.
-      - run: pip install -r requirements-dev.txt
+          version: '0.12.23'
+          enable-cache: true
+      - run: uv sync --locked
       - name: Pytest
-        run: pytest -v
+        run: uv run pytest -v
 
   publish:
     name: Publish container

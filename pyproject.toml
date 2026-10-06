@@ -1,0 +1,24 @@
+[project]
+name = "dynaform"
+version = "0.0.0"
+requires-python = ">=3.12"
+# Direct dependencies are pinned exactly, as requirements.txt had them: a bump
+# is a Dependabot PR with its own diff, not something a fresh resolve does
+# silently. uv.lock pins everything transitive, with hashes.
+dependencies = [
+    "Flask==3.1.3",
+    "Flask-WTF==1.3.0",
+    "WTForms==3.2.2",
+    "Jinja2==3.1.6",
+    "gunicorn==26.2.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest==9.1.1",
+    # Pinned: an unpinned linter changes what it enforces without a commit,
+    # so it can fail CI on an unchanged codebase. ruff 0.16 widened its
+    # DEFAULT rule set (isort, part of pylint) over 0.15, which is exactly
+    # that failure mode.
+    "ruff==0.16.7",
+]

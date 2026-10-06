@@ -360,20 +360,19 @@ the name of a template loaded from the directory are logged -- but never the sub
 
 ## Running it locally
 
-Python 3.12 or newer.
+Needs [uv](https://docs.astral.sh/uv/). It installs Python 3.12 (from `.python-version`)
+if you don't have it, and creates `.venv` from `uv.lock`.
 
 ```bash
 git clone git@github.com:0uwl/dynaform.git
 cd dynaform
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+uv sync
 ```
 
 Development server (`--debug` supplies a throwaway `SECRET_KEY`):
 
 ```bash
-flask --app app run --debug
+uv run flask --app app run --debug
 ```
 
 Then open <http://127.0.0.1:5000>.
@@ -534,8 +533,7 @@ systemctl --user restart dynaform
 ## Tests
 
 ```bash
-pip install -r requirements-dev.txt
-pytest
+uv run pytest
 ```
 
 The suite has no external dependencies and needs no running server:
