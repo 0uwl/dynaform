@@ -26,6 +26,7 @@ RUN --mount=from=uv,source=/uv,target=/bin/uv \
     uv sync --locked --no-dev --no-install-project --no-cache \
     && pip uninstall --yes pip
 
+COPY gunicorn.conf.py .
 COPY app/ app/
 
 # Mount point for the operator's own templates. Created empty and owned by the
@@ -37,5 +38,5 @@ RUN mkdir -p /templates && chown dynaform:dynaform /templates
 USER dynaform
 EXPOSE 8000
 
-CMD gunicorn -w ${GUNICORN_WORKERS:-2} -b ${BIND_HOST:-0.0.0.0}:${BIND_PORT:-8000} \
-    --access-logfile - --error-logfile - "app:create_app()"
+# Bind address, port, workers and logging come from gunicorn.conf.py.
+CMD ["gunicorn", "app:create_app()"]
