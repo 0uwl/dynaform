@@ -20,5 +20,5 @@ dev = [
     # so it can fail CI on an unchanged codebase. ruff 0.16 widened its
     # DEFAULT rule set (isort, part of pylint) over 0.15, which is exactly
     # that failure mode.
-    "ruff==0.16.7",
+    "ruff==0.16.9",
 ]
