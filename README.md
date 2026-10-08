@@ -351,7 +351,7 @@ All configuration is by environment variable.
 | `MAX_CONTENT_LENGTH` | `262144`   | Max request body in bytes (256 KB).                          |
 | `TEMPLATE_DIR`       | *(empty)*  | Directory of ready-made templates to list in the picker. Empty turns the picker off. The container image sets it to `/templates`. |
 | `TEMPLATE_MAX_BYTES` | `65536`    | Files in `TEMPLATE_DIR` larger than this are not listed (64 KB). |
-| `BIND_HOST`          | `0.0.0.0`  | Gunicorn bind address (container only).                      |
+| `BIND_HOST`          | `[::]`     | Gunicorn bind address (container only). Accepts IPv4 and IPv6, so `localhost` works when it resolves to `::1`. Set `0.0.0.0` on hosts with IPv6 disabled. |
 | `BIND_PORT`          | `8000`     | Gunicorn bind port (container only).                         |
 | `GUNICORN_WORKERS`   | `2`        | Number of gunicorn workers (container only).                 |
 
