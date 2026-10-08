@@ -8,7 +8,7 @@ After=network-online.target
 # never moves it. Pin a version instead by replacing the tag (see the README).
 Image=ghcr.io/0uwl/dynaform:latest
 PublishPort=8000:8000
-Environment=BIND_HOST=0.0.0.0
+Environment=BIND_HOST=[::]
 Environment=BIND_PORT=8000
 Environment=GUNICORN_WORKERS=2
 # Required, and deliberately empty: DynaForm signs its CSRF tokens with this and

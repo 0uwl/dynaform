@@ -4,7 +4,7 @@
 # SIGTERM directly on `podman stop`, instead of via a shell that drops it.
 import os
 
-bind = f"{os.environ.get('BIND_HOST', '0.0.0.0')}:{os.environ.get('BIND_PORT', '8000')}"
+bind = f"{os.environ.get('BIND_HOST', '[::]')}:{os.environ.get('BIND_PORT', '8000')}"
 workers = int(os.environ.get("GUNICORN_WORKERS", "2"))
 accesslog = "-"
 errorlog = "-"
