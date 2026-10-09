@@ -3,19 +3,11 @@ name: CI / Release
 on:
   push:
     branches: [main]
-    # Publishing is driven by the tag, not by a GitHub release: the release is
-    # created at the end of a green run (see the publish job), so it means the
-    # image built and was pushed. Releasing on `release:
-    # published` had that backwards -- the release went public first and could
-    # end up pointing at an image that was never published.
+    # Publishing is driven by the tag
     tags: ['v*']
   pull_request:
     branches: [main]
 
-# Default for every job unless it declares its own permissions block below --
-# a job-level block replaces this rather than adding to it, so any job that
-# needs more than read-only checkout still has to spell out that scope too,
-# but jobs that need nothing else (lint, test) can just omit the block.
 permissions:
   contents: read
 
@@ -35,6 +27,7 @@ jobs:
       # --locked fails if uv.lock is stale against pyproject.toml. ruff is
       # pinned in the dev group there; see the comment beside it.
       - run: uv sync --locked
+
       - name: Ruff (Python)
         run: uv run ruff check .
       # image-tag is the load-bearing pin here, not the `@` ref: the action is
@@ -55,23 +48,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      # uv reads the interpreter version from .python-version, the single
-      # source of truth for both jobs and for local development. The uv
-      # version is pinned to match the Containerfile's uv image.
+
       - uses: astral-sh/setup-uv@v10.2.0
         with:
           version: '0.12.23'
           enable-cache: true
+
       - run: uv sync --locked
+
       - name: Pytest
         run: uv run pytest -v
 
   publish:
     name: Publish container
-    # Publishing on a tag rather than on every push to main means the
-    # published image always corresponds to a version someone chose to cut.
-    # lint and test are not gated to the tag, so they run on pushes and pull
-    # requests too -- and `needs` here keeps a red build from shipping.
     needs: [lint, test]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
@@ -88,29 +77,31 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/login-action@v4
+        with:
+          registry: docker.io
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
       # Derives the image tags from the git tag, which metadata-action reads
       # off the ref: `v1.4.0` publishes :1.4.0 and :1.4 (the `v` is stripped
       # by {{version}}).
       #
       # latest=auto withholds :latest from a semver prerelease (v1.4.0-rc1
-      # publishes :1.4.0-rc1 and nothing else), which is what the old
-      # `enable: !github.event.release.prerelease` did off the release
-      # object. The signal moves from the pre-release checkbox to the tag
-      # name, and `podman pull dynaform` -- what dynaform.container resolves
-      # by default -- still never lands on a release candidate.
+      # publishes :1.4.0-rc1 and nothing else)
       - id: meta
         uses: docker/metadata-action@v6
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: |
+            ghcr.io/${{ github.repository }}
+            docker.io/${{ vars.DOCKERHUB_USERNAME }}/dynaform
           flavor: latest=auto
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-      # linux/arm64 covers e.g. a 64-bit Raspberry Pi host; QEMU
-      # (setup-qemu-action) emulates it since this runner is amd64.
+      # QEMU simulates linux/arm64 which covers e.g. a 64-bit Raspberry Pi host.
       # cache-from/to: type=gha caches build layers in the Actions cache
-      # and reuses whatever's still valid on the next run -- including the
-      # amd64 layers trivy.yml's scan build wrote.
+      # and reuses whatever's still valid on the next run
       - name: Build and publish image
         uses: docker/build-push-action@v7
         with:
@@ -133,7 +124,7 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "::notice::Release $TAG already exists -- leaving it as it is."
+            echo "::notice::Release $TAG already exists, leaving it as it is."
             exit 0
           fi
           # A semver prerelease carries a hyphen (v1.4.0-rc1) and a full
