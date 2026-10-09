@@ -3,31 +3,28 @@ Description=DynaForm
 After=network-online.target
 
 [Container]
-# The published image, so a fresh host can start this unit without building
-# anything. `:latest` follows the newest full release -- a pre-release tag
-# never moves it. Pin a version instead by replacing the tag (see the README).
 Image=ghcr.io/0uwl/dynaform:latest
 PublishPort=8000:8000
+
+# ! Required !
+# Generate a key with `openssl rand -base64 32` and paste it after the `=`. 
+# To keep it out of this file, the README describes handing it to Podman as a secret instead.
+Environment=SECRET_KEY=
+
+# Optional gunicorn configurations
 Environment=BIND_HOST=[::]
 Environment=BIND_PORT=8000
 Environment=GUNICORN_WORKERS=2
-# Required, and deliberately empty: DynaForm signs its CSRF tokens with this and
-# refuses to start without it, logging these same instructions. Generate a key
-# with `openssl rand -base64 32` and paste it after the `=`. To keep it out of
-# this file, the README describes handing it to Podman as a secret instead.
-Environment=SECRET_KEY=
-# Opt-in: a host directory of ready-made .j2 templates, listed in the picker on
-# the first page. Read-only -- DynaForm never writes to it.
+
+# An optional host directory for .j2 templates, listed in the picker on
+# the home page.
 #
-# Commented out because Podman does not create the source of a bind mount for a
-# Quadlet unit: point this at a directory that does not exist and the service
-# fails to start rather than starting without the picker. To turn it on, make
-# the directory first and then uncomment the line:
+# Create the directory first and then uncomment the line:
 #
 #     mkdir -p ~/.local/share/dynaform/templates
 #
-# Adjust the host path to taste; drop ":Z" on systems without SELinux.
 #Volume=%h/.local/share/dynaform/templates:/templates:ro,Z
+
 
 [Service]
 Restart=on-failure
