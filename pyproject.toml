@@ -22,3 +22,7 @@ dev = [
     # that failure mode.
     "ruff==0.16.7",
 ]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

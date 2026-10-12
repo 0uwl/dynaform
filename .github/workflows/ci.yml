@@ -15,19 +15,19 @@ on:
 # Default for every job unless it declares its own permissions block below --
 # a job-level block replaces this rather than adding to it, so any job that
 # needs more than read-only checkout still has to spell out that scope too,
-# but jobs that need nothing else (lint, test) can just omit the block.
+# but jobs that need nothing else (check) can just omit the block.
 permissions:
   contents: read
 
 jobs:
-  lint:
-    name: Lint
+  check:
+    name: Lint and test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       # uv reads the interpreter version from .python-version, the single
-      # source of truth for both jobs and for local development. The uv
-      # version is pinned to match the Containerfile's uv image.
+      # source of truth for CI and for local development. The uv version is
+      # pinned to match the Containerfile's uv image.
       - uses: astral-sh/setup-uv@v10.2.0
         with:
           version: '0.12.23'
@@ -49,20 +49,6 @@ jobs:
           image-tag: '1.7.0'
           engine: podman
           preset: production
-
-  test:
-    name: Test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      # uv reads the interpreter version from .python-version, the single
-      # source of truth for both jobs and for local development. The uv
-      # version is pinned to match the Containerfile's uv image.
-      - uses: astral-sh/setup-uv@v10.2.0
-        with:
-          version: '0.12.23'
-          enable-cache: true
-      - run: uv sync --locked
       - name: Pytest
         run: uv run pytest -v
 
@@ -70,9 +56,9 @@ jobs:
     name: Publish container
     # Publishing on a tag rather than on every push to main means the
     # published image always corresponds to a version someone chose to cut.
-    # lint and test are not gated to the tag, so they run on pushes and pull
-    # requests too -- and `needs` here keeps a red build from shipping.
-    needs: [lint, test]
+    # check is not gated to the tag, so it runs on pushes and pull requests
+    # too -- and `needs` here keeps a red build from shipping.
+    needs: [check]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:

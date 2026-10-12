@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from flask import current_app
-from jinja2 import BaseLoader, TemplateNotFound
 
 SUFFIXES = frozenset({".j2", ".txt"})
 
@@ -100,26 +99,3 @@ def read_template(name: str) -> str | None:
                 return None
     return None
 
-
-# Resolves a referenced name ({% include %}, {% import %}, {% extends %}) the
-# same way read_template does, so unlike the picker it serves "_" partials.
-class LibraryLoader(BaseLoader):
-    """Serves templates from TEMPLATE_DIR by name, or refuses readably."""
-
-    def get_source(self, environment, template):
-        if library_root() is None:
-            raise TemplateNotFound(
-                template,
-                message=(
-                    f"this template refers to another template ({template}), "
-                    "but no template directory is configured. There is "
-                    "nothing to include, import or extend"
-                ),
-            )
-        source = read_template(template)
-        if source is None:
-            raise TemplateNotFound(
-                template,
-                message=f"referenced template not found in the directory: {template}",
-            )
-        return source, None, lambda: True
