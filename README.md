@@ -533,6 +533,9 @@ and `GITSYNC_REPO`, then `systemctl --user daemon-reload && systemctl --user sta
 For a private repo, the sync unit shows how to hand git-sync an access token as a Podman secret.
 A merged change reaches the picker within the sync period without having to restart DynaForm.
 
+To try it against a local repo served over plain ("dumb") HTTP, add `Environment=GITSYNC_DEPTH=0`
+to the sync unit: git-sync clones shallowly by default, which dumb HTTP doesn't support.
+
 #### Running your own build instead
 
 Point `Image=` at the image `podman build` leaves in local storage, and Podman stops reaching for
