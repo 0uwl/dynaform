@@ -61,7 +61,7 @@ jobs:
 
   publish:
     name: Publish container
-    needs: [lint, test]
+    needs: [check]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
