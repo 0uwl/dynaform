@@ -4,7 +4,14 @@ After=network-online.target
 
 [Container]
 Image=ghcr.io/0uwl/dynaform:latest
-PublishPort=8000:8000
+# Reachable from this host only. To serve your team on the LAN, publish on
+# all interfaces instead (and see "Deployment security" in the README):
+#PublishPort=8000:8000
+PublishPort=127.0.0.1:8000:8000
+
+# Backstop for the whole container; each worker is also capped by
+# WORKER_MAX_MEMORY_MB (see gunicorn.conf.py).
+PodmanArgs=--memory=768m
 
 # ! Required !
 # Generate a key with `openssl rand -base64 32` and paste it after the `=`. 
@@ -15,6 +22,8 @@ Environment=SECRET_KEY=
 Environment=BIND_HOST=[::]
 Environment=BIND_PORT=8000
 Environment=GUNICORN_WORKERS=2
+Environment=GUNICORN_TIMEOUT=10
+Environment=WORKER_MAX_MEMORY_MB=256
 
 # An optional host directory for .j2 templates, listed in the picker on
 # the home page.

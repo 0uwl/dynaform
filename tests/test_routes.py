@@ -258,6 +258,18 @@ class TestRenderSandboxing:
         assert resp.status_code == 400
         assert b"Rendering failed" in resp.data
 
+    def test_huge_exponent_refused(self, client):
+        resp = client.post(
+            "/render",
+            data={
+                "template_source": "{{ S_x }}{{ ((10 ** 1000) ** 1000) ** 1000 }}",
+                "S_x": "hi",
+                "submit": "Render template",
+            },
+        )
+        assert resp.status_code == 400
+        assert b"is too large to compute" in resp.data
+
 
 class TestTemplateLibrary:
     def test_index_has_no_picker_when_no_directory_configured(self, client):

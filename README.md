@@ -46,7 +46,7 @@ and never becomes a form field. So does Jinja's own functions: `range()`, `names
 `loop.index`, every filter and test.
 
 That means ordinary templating works as you'd expect, with the form asking only for the
-`S_`/`P_`/`N_`/`B_`/`R_` variables:
+`S_`/`P_`/`N_`/`B_`/`R_`/`L_` variables:
 
 ```jinja
 {% set scheme = "https" if B_tls else "http" %}
@@ -354,6 +354,8 @@ All configuration is by environment variable.
 | `BIND_HOST`          | `[::]`     | Gunicorn bind address (container only). Accepts IPv4 and IPv6, so `localhost` works when it resolves to `::1`. Set `0.0.0.0` on hosts with IPv6 disabled. |
 | `BIND_PORT`          | `8000`     | Gunicorn bind port (container only).                         |
 | `GUNICORN_WORKERS`   | `2`        | Number of gunicorn workers (container only).                 |
+| `GUNICORN_TIMEOUT`   | `10`       | Seconds before a stuck worker is killed and replaced (container only). |
+| `WORKER_MAX_MEMORY_MB` | `256`    | Address-space limit per worker; a template that needs more fails with a render error (container only). |
 
 Logs go to stdout only. Template accepted/rejected, validation failures, render outcomes, and
 the name of a template loaded from the directory are logged -- but never the submitted values.
@@ -529,6 +531,28 @@ Then rebuild before restarting after a code change:
 podman build -t dynaform:latest .
 systemctl --user restart dynaform
 ```
+
+## Deployment security
+
+DynaForm has no local user accounts by design. It stores nothing and writes nothing, so a login
+would guard very little. However, that does not make DynaForm harmless. 
+
+Anyone who can reach the port which DynaForm listens on can:
+
+- **Read every file in `TEMPLATE_DIR`**, `_` partials included. __Keep secrets out of templates__ and
+  make them `P_` fields instead.
+- **Slow down or overload the server.** Every template runs on the server when it is rendered, so
+  a template can be written to use a lot of CPU or memory. The Jinja sandbox stops
+  templates from reaching Python internals. Huge exponents are refused, `GUNICORN_TIMEOUT` kills
+  runaway loops, and `WORKER_MAX_MEMORY_MB` plus the unit's `--memory` cap memory use. Together
+  these keep one bad template from taking the host down, but a determined user can still keep the
+  workers busy.
+- **Watch the traffic in transport** if it is plain HTTP. `P_` values and rendered output cross the network
+  unencrypted.
+
+The Quadlet unit publishes on `127.0.0.1` by default. To share it with a team, put a reverse proxy
+(Caddy, nginx, Traefik) in front of it for TLS and, if you need to limit who gets in, basic auth or SSO.
+Don't publish it to the internet unless you know what you are doing.
 
 ## Tests
 
