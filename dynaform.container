@@ -4,9 +4,11 @@ After=network-online.target
 
 [Container]
 Image=ghcr.io/0uwl/dynaform:latest
-# Reachable from this host only. To serve your team on the LAN, publish on
-# all interfaces instead (and see "Deployment security" in the README):
-#PublishPort=8000:8000
+ContainerName=dynaform
+
+# Reachable from this host only
+# See "Deployment security" in the README to know the security implications
+# of publishing DynaForm to all interfaces
 PublishPort=127.0.0.1:8000:8000
 
 # Backstop for the whole container; each worker is also capped by
@@ -14,7 +16,8 @@ PublishPort=127.0.0.1:8000:8000
 PodmanArgs=--memory=768m
 
 # ! Required !
-# Generate a key with `openssl rand -base64 32` and paste it after the `=`. 
+# Generate a key with:
+#   `openssl rand -base64 32`  
 # To keep it out of this file, the README describes handing it to Podman as a secret instead.
 Environment=SECRET_KEY=
 

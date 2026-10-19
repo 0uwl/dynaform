@@ -1,0 +1,5 @@
+[Volume]
+# Defines a volume shared by dynaform-gitsync (writes) and dynaform (reads)
+VolumeName=dynaform-templates
+User=65533
+Group=65533

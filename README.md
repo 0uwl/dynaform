@@ -516,6 +516,23 @@ rootless service that should survive logout, enable lingering:
 loginctl enable-linger "$USER"
 ```
 
+#### Templates from a git repository
+
+If your template library lives in a git repo (GitLab, GitHub, Gitea, ...), you don't need to
+clone it by hand or mount a host directory. [`examples/quadlet-git/`](examples/quadlet-git) has
+three units that keep a volume in step with the repo:
+
+- `dynaform-gitsync.container` runs [git-sync](https://github.com/kubernetes/git-sync), which pulls
+  the repo every 30 seconds and publishes each checkout behind a `current` symlink.
+- `templates.volume` is the volume the two containers share.
+- `dynaform.container` is the regular unit with `templates.volume` mounted read-only on
+  `/templates` and `TEMPLATE_DIR=/templates/current`.
+
+Copy the three files next to each other into `~/.config/containers/systemd/`, set `SECRET_KEY`
+and `GITSYNC_REPO`, then `systemctl --user daemon-reload && systemctl --user start dynaform`.
+For a private repo, the sync unit shows how to hand git-sync an access token as a Podman secret.
+A merged change reaches the picker within the sync period without having to restart DynaForm.
+
 #### Running your own build instead
 
 Point `Image=` at the image `podman build` leaves in local storage, and Podman stops reaching for
