@@ -1,0 +1,27 @@
+[Unit]
+Description=Sync the DynaForm template library from git
+
+[Container]
+Image=registry.k8s.io/git-sync/git-sync:v4.4.0
+ContainerName=dynaform-gitsync
+Volume=templates.volume:/git
+
+Environment=GITSYNC_REPO=https://gitlab.example.com/team/templates.git
+Environment=GITSYNC_REF=main
+Environment=GITSYNC_ROOT=/git
+# A symlink to the newest checkout, swapped atomically after each pull.
+Environment=GITSYNC_LINK=current
+Environment=GITSYNC_PERIOD=30s
+
+# Private repo: create a secret holding a token, then uncomment both lines:
+#
+#     printf '%s' "<token>" | podman secret create templates-git-token -
+#
+#Environment=GITSYNC_USERNAME=dynaform-sync
+#Secret=templates-git-token,type=env,target=GITSYNC_PASSWORD
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target
