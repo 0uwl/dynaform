@@ -3,18 +3,17 @@ from __future__ import annotations
 
 from flask import Blueprint, Response, current_app, flash, render_template, request
 from jinja2 import FunctionLoader
-from jinja2.sandbox import SandboxedEnvironment
 
 from .forms import UploadForm, build_dynamic_form
 from .template_library import read_template
-from .template_parser import TemplateValidationError, parse_template
+from .template_parser import BoundedSandbox, TemplateValidationError, parse_template
 
 bp = Blueprint("dynaform", __name__)
 
 # References resolve through read_template, "_" partials included;
 # parse_template has already refused any that don't. A directory template is
 # small, so the cache is off to avoid stale includes/extends.
-_RENDER_ENV = SandboxedEnvironment(loader=FunctionLoader(read_template), cache_size=0)
+_RENDER_ENV = BoundedSandbox(loader=FunctionLoader(read_template), cache_size=0)
 
 
 def _ordered_items(parsed):

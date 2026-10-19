@@ -46,7 +46,7 @@ and never becomes a form field. So does Jinja's own functions: `range()`, `names
 `loop.index`, every filter and test.
 
 That means ordinary templating works as you'd expect, with the form asking only for the
-`S_`/`P_`/`N_`/`B_`/`R_` variables:
+`S_`/`P_`/`N_`/`B_`/`R_`/`L_` variables:
 
 ```jinja
 {% set scheme = "https" if B_tls else "http" %}
@@ -354,6 +354,8 @@ All configuration is by environment variable.
 | `BIND_HOST`          | `[::]`     | Gunicorn bind address (container only). Accepts IPv4 and IPv6, so `localhost` works when it resolves to `::1`. Set `0.0.0.0` on hosts with IPv6 disabled. |
 | `BIND_PORT`          | `8000`     | Gunicorn bind port (container only).                         |
 | `GUNICORN_WORKERS`   | `2`        | Number of gunicorn workers (container only).                 |
+| `GUNICORN_TIMEOUT`   | `10`       | Seconds before a stuck worker is killed and replaced (container only). |
+| `WORKER_MAX_MEMORY_MB` | `256`    | Address-space limit per worker; a template that needs more fails with a render error (container only). |
 
 Logs go to stdout only. Template accepted/rejected, validation failures, render outcomes, and
 the name of a template loaded from the directory are logged -- but never the submitted values.
@@ -529,6 +531,85 @@ Then rebuild before restarting after a code change:
 podman build -t dynaform:latest .
 systemctl --user restart dynaform
 ```
+
+## Deployment security
+
+DynaForm has no local user accounts by design. It stores nothing and writes nothing, so a login
+would guard very little. However, that does not make DynaForm harmless. 
+
+Anyone who can reach the port which DynaForm listens on can:
+
+- **Read every file in `TEMPLATE_DIR`**, `_` partials included. __Keep secrets out of templates__ and
+  make them `P_` fields instead.
+- **Slow down or overload the server.** Every template runs on the server when it is rendered, so
+  a template can be written to use a lot of CPU or memory. The Jinja sandbox stops
+  templates from reaching Python internals. Huge exponents are refused, `GUNICORN_TIMEOUT` kills
+  runaway loops, and `WORKER_MAX_MEMORY_MB` plus the unit's `--memory` cap memory use. Together
+  these keep one bad template from taking the host down, but a determined user can still keep the
+  workers busy.
+- **Watch the traffic in transport** if it is plain HTTP. `P_` values and rendered output cross the network
+  unencrypted.
+
+The Quadlet unit publishes on `127.0.0.1` by default. To share it with a team, put a reverse proxy
+(Caddy, nginx, Traefik) in front of it for TLS and, if you need to limit who gets in, basic auth or SSO.
+Don't publish it to the internet unless you know what you are doing.
+
+The examples below run the proxy on the same host as DynaForm and serve it as
+`dynaform.example.lan`. Replace that name, and the certificate paths, with your own.
+
+**Caddy.** `tls internal` makes Caddy issue a certificate from its own local CA. Use this for a
+name that a public CA can't verify, and install Caddy's root certificate on your team's machines:
+
+```caddyfile
+dynaform.example.lan {
+    tls internal
+    reverse_proxy 127.0.0.1:8000
+}
+```
+
+**nginx:**
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name dynaform.example.lan;
+
+    ssl_certificate     /etc/ssl/certs/dynaform.crt;
+    ssl_certificate_key /etc/ssl/private/dynaform.key;
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+**Traefik.** DynaForm runs from a Quadlet unit, not from Traefik's Docker provider, so this uses
+the file provider (dynamic configuration) rather than container labels:
+
+```yaml
+http:
+  routers:
+    dynaform:
+      rule: "Host(`dynaform.example.lan`)"
+      entryPoints: [websecure]
+      service: dynaform
+      tls: {}
+  services:
+    dynaform:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:8000"
+tls:
+  certificates:
+    - certFile: /etc/traefik/certs/dynaform.crt
+      keyFile: /etc/traefik/certs/dynaform.key
+```
+
+To add basic auth, use Caddy's `basic_auth` directive, nginx's `auth_basic`, or Traefik's
+`basicAuth` middleware.
 
 ## Tests
 

@@ -22,10 +22,42 @@ from dataclasses import dataclass
 from dataclasses import field as dc_field
 
 from jinja2 import TemplateSyntaxError, nodes
+from jinja2.exceptions import SecurityError
 from jinja2.meta import find_undeclared_variables
 from jinja2.sandbox import SandboxedEnvironment
 
-_ENV = SandboxedEnvironment()
+MAX_POWER_BITS = 100_000
+
+
+class BoundedSandbox(SandboxedEnvironment):
+    """The sandbox, minus integer `**` results big enough to pin a worker.
+
+    {{ 9 ** 999999999 }} is pure CPU in C and never comes back to Python, so
+    nothing but gunicorn's timeout would stop it. The check is on the result's
+    size rather than the exponent, since Jinja's `**` is left-associative and
+    ((10 ** 1000) ** 1000) ** 1000 gets there in small steps.
+
+    Intercepting `**` also keeps Jinja from constant-folding it at compile
+    time -- which find_undeclared_variables triggers, so parsing alone would
+    otherwise do the arithmetic. Memory blow-ups ("a" * 10**9,
+    |center(10**9), ...) are too many to list here; the per-worker memory
+    limit in gunicorn.conf.py turns those into a MemoryError instead.
+    """
+
+    intercepted_binops = frozenset({"**"})
+
+    def call_binop(self, context, operator, left, right):
+        if (
+            operator == "**"
+            and isinstance(left, int)
+            and isinstance(right, int)
+            and left.bit_length() * right > MAX_POWER_BITS
+        ):
+            raise SecurityError(f"{left} ** {right} is too large to compute")
+        return super().call_binop(context, operator, left, right)
+
+
+_ENV = BoundedSandbox()
 
 # Bounds how far a template's reuse graph is
 # walked before parsing refuses rather than following it (or looping) forever.
