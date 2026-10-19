@@ -2,18 +2,19 @@
 from __future__ import annotations
 
 from flask import Blueprint, Response, current_app, flash, render_template, request
-from jinja2.exceptions import SecurityError
+from jinja2 import FunctionLoader
 from jinja2.sandbox import SandboxedEnvironment
 
 from .forms import UploadForm, build_dynamic_form
-from .template_library import LibraryLoader, read_template
+from .template_library import read_template
 from .template_parser import TemplateValidationError, parse_template
 
 bp = Blueprint("dynaform", __name__)
 
-# A directory template is small so the cache can be turned off to 
-# avoid stale includes/extends etc.
-_RENDER_ENV = SandboxedEnvironment(loader=LibraryLoader(), cache_size=0)
+# References resolve through read_template, "_" partials included;
+# parse_template has already refused any that don't. A directory template is
+# small, so the cache is off to avoid stale includes/extends.
+_RENDER_ENV = SandboxedEnvironment(loader=FunctionLoader(read_template), cache_size=0)
 
 
 def _ordered_items(parsed):
@@ -91,6 +92,7 @@ def parse():
         current_app.logger.debug("Loading content into text area manually")
         return _load_into_editor(form)
 
+    source = ""  # stays empty when nothing was uploaded, typed or picked
     uploaded = form.template_file.data
     if uploaded and uploaded.filename:
         current_app.logger.info("Loading content from file")
@@ -101,9 +103,6 @@ def parse():
     elif form.template_choice.data:
         current_app.logger.info("Loading content from selected template")
         source = read_template(form.template_choice.data) or ""
-    else:
-        # Nothing uploaded, typed or picked
-        source = ""
 
     if not source.strip():
         current_app.logger.info("Empty or incorrect content was sent")
@@ -192,12 +191,9 @@ def render():
 
     try:
         output = _RENDER_ENV.from_string(source).render(**context)
-    except SecurityError as exc:
-        current_app.logger.error(f"Sandbox blocked the template: {exc}")
-        return _render_failed(exc, dynamic_form, parsed)
     except Exception as exc:  # noqa: BLE001 - the blind catch is the point
-        # Rendering runs code the visitor wrote, and a template can raise
-        # whatever it likes: {{ 1/0 }} is a ZeroDivisionError, arithmetic on a
+        # Rendering runs code the visitor wrote (the sandbox's SecurityError
+        # included), and a template can raise whatever it likes: {{ 1/0 }} is a ZeroDivisionError, arithmetic on a
         # field left blank is a TypeError, and any filter can raise its own.
         # Enumerating them is a losing game, and each one missed is a 500
         # blaming the service for what the template did -- so they all belong
@@ -205,13 +201,8 @@ def render():
         # try wraps a single call, so this cannot swallow a bug in DynaForm's
         # own handling around it.
         current_app.logger.warning(f"Render failed: {type(exc).__name__}: {exc}")
-        return _render_failed(exc, dynamic_form, parsed)
+        flash(f"Rendering failed: {exc}", "danger")
+        return render_template("form.html", form=dynamic_form, items=_ordered_items(parsed)), 400
 
     current_app.logger.info(f"Template rendered successfully ({len(output)} bytes output)")
     return render_template("result.html", output=output)
-
-
-def _render_failed(exc: Exception, dynamic_form, parsed):
-    """Put a rendering failure back on the form the values came from."""
-    flash(f"Rendering failed: {exc}", "danger")
-    return render_template("form.html", form=dynamic_form, items=_ordered_items(parsed)), 400

@@ -12,14 +12,14 @@ permissions:
   contents: read
 
 jobs:
-  lint:
-    name: Lint
+  check:
+    name: Lint and test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       # uv reads the interpreter version from .python-version, the single
-      # source of truth for both jobs and for local development. The uv
-      # version is pinned to match the Containerfile's uv image.
+      # source of truth for CI and for local development. The uv version is
+      # pinned to match the Containerfile's uv image.
       - uses: astral-sh/setup-uv@v10.2.0
         with:
           version: '0.12.23'

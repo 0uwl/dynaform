@@ -57,9 +57,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const link = document.createElement("a");
     link.href = url;
     link.download = "dynaform-output.txt";
-    document.body.appendChild(link);
     link.click();
-    link.remove();
     URL.revokeObjectURL(url);
     announce("Downloaded dynaform-output.txt.");
   });
