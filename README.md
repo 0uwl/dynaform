@@ -554,6 +554,63 @@ The Quadlet unit publishes on `127.0.0.1` by default. To share it with a team, p
 (Caddy, nginx, Traefik) in front of it for TLS and, if you need to limit who gets in, basic auth or SSO.
 Don't publish it to the internet unless you know what you are doing.
 
+The examples below run the proxy on the same host as DynaForm and serve it as
+`dynaform.example.lan`. Replace that name, and the certificate paths, with your own.
+
+**Caddy.** `tls internal` makes Caddy issue a certificate from its own local CA. Use this for a
+name that a public CA can't verify, and install Caddy's root certificate on your team's machines:
+
+```caddyfile
+dynaform.example.lan {
+    tls internal
+    reverse_proxy 127.0.0.1:8000
+}
+```
+
+**nginx:**
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name dynaform.example.lan;
+
+    ssl_certificate     /etc/ssl/certs/dynaform.crt;
+    ssl_certificate_key /etc/ssl/private/dynaform.key;
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+**Traefik.** DynaForm runs from a Quadlet unit, not from Traefik's Docker provider, so this uses
+the file provider (dynamic configuration) rather than container labels:
+
+```yaml
+http:
+  routers:
+    dynaform:
+      rule: "Host(`dynaform.example.lan`)"
+      entryPoints: [websecure]
+      service: dynaform
+      tls: {}
+  services:
+    dynaform:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:8000"
+tls:
+  certificates:
+    - certFile: /etc/traefik/certs/dynaform.crt
+      keyFile: /etc/traefik/certs/dynaform.key
+```
+
+To add basic auth, use Caddy's `basic_auth` directive, nginx's `auth_basic`, or Traefik's
+`basicAuth` middleware.
+
 ## Tests
 
 ```bash
