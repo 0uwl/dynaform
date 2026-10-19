@@ -7,7 +7,7 @@ FROM ghcr.io/astral-sh/uv:0.12.23@sha256:61d393e44e249f2e4b526b6c7ddcecce2459468
 # Debian security fixes arrive through this digest: Dependabot bumps it
 # (.github/dependabot.yml), and the Trivy scan reports what the current one
 # carries.
-FROM python:3.12-slim@sha256:dddfd7e07f9d15aeeca61529320492139d21cac7f0070c00609243e51e4e0016
+FROM python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
 
 RUN useradd --create-home --uid 1000 dynaform
 WORKDIR /app
