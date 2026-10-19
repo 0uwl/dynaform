@@ -4,8 +4,8 @@
   <div class="row justify-content-center">
     <div class="col-lg-8">
       <p class="lead">Pick a ready-made template, paste one, or upload a <code>.j2</code> file, and
-        DynaForm builds a form for its <code>S_</code>/<code>P_</code>/<code>N_</code>/<code>B_</code>/<code>R_</code>
-        variables. Nothing is stored -- it only renders the output.</p>
+        DynaForm builds a form for its <code>S_</code>/<code>P_</code>/<code>N_</code>/<code>B_</code>/<code>R_</code>/<code>L_</code>
+        variables.</p>
 
       <form method="post" enctype="multipart/form-data" novalidate>
         {{ form.hidden_tag() }}
@@ -51,7 +51,6 @@
           {%- set placeholder %}{% raw %}Hello {{ S_name }}, you are {{ N_age }}.{% endraw %}{% endset %}
           {{ form.template_text(class="form-control", rows=14, spellcheck="false",
                                 placeholder=placeholder) }}
-          <div class="form-text">Whatever is in here when you press Parse template is what gets parsed.</div>
         </div>
 
         {{ form.submit(class="btn btn-primary") }}
