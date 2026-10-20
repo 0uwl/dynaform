@@ -5,6 +5,10 @@ Description=Sync the DynaForm template library from git
 Image=registry.k8s.io/git-sync/git-sync:v4.4.0
 ContainerName=dynaform-gitsync
 Volume=templates.volume:/git
+# Run as the dynaform user (Containerfile: uid 1000) instead of the image default
+# 65533, so dynaform can read the checkout.
+User=1000
+Group=1000
 
 Environment=GITSYNC_REPO=https://gitlab.example.com/team/templates.git
 Environment=GITSYNC_REF=main
