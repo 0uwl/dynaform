@@ -38,6 +38,87 @@ Labels are derived from the name: the prefix is dropped, underscores become spac
 first word is capitalized (`N_user_age` -> "User age"). Fields appear in the order the variables
 first occur in the template source.
 
+### Radio groups
+
+Radio variables are named `R_<group>_<option>`. The group name is the single word right after
+`R_` and may not contain underscores. All variables sharing a group render as one radio set, and
+in the rendered template exactly one of them is true:
+
+```jinja
+Favourite colour:
+{% if R_color_red %}red{% elif R_color_blue %}blue{% elif R_color_green %}green{% endif %}
+```
+
+That produces one "Color" group with Red / Blue / Green options.
+
+### Conditional fields
+
+A field is treated as a child of checkbox `B_<base>` when its own name (after the prefix) starts
+with `<base>_`. Children are hidden until the checkbox is ticked, and they're optional rather
+than required. If several checkboxes match, the longest base wins.
+
+```jinja
+Hello {{ S_username }}, age {{ N_user_age }}.
+{% if B_admin %}
+Admin: {{ S_admin_name }} / {{ P_admin_pass }}
+{% endif %}
+```
+
+Ticking **Admin** unfolds the "Admin name" and "Admin pass" inputs.
+
+A field used only in the checkbox's `{% else %}` branch works the other way round: it is shown
+while the box is unticked and swapped out when it is ticked. It is optional too.
+
+```jinja
+{% if B_access %}
+switchport access vlan {{ N_access_vlan_id }}
+{% else %}
+switchport trunk allowed vlan {{ S_vlan_list }}
+{% endif %}
+```
+
+"Vlan list" shows until **Access** is ticked, then "Access vlan id" takes its place. This is read
+from the template's structure rather than the names, so it only applies when the else branch
+runs exactly when the box is unticked: the test is the checkbox alone (`{% if B_access %}`, not
+`{% if not B_access %}`), there is no `{% elif %}`, and the field isn't used anywhere outside that
+branch.
+
+### Lists
+
+An `L_` variable is a list the form lets you grow: each row is a small group of fields, and the
+template loops over the rows. Read each row's fields off the loop variable:
+
+```jinja
+server {
+    listen {{ N_port }};
+{% for loc in L_locations %}
+    location {{ loc.S_path }} {
+        proxy_pass http://127.0.0.1:{{ loc.N_port | default(8080) }};
+    }
+{% endfor %}
+}
+```
+
+The form shows "Locations" with one row of "Path" and "Port", an **Add row** button and a
+**Remove** button on each row. Inside a row, `loc.N_port` and the top-level `N_port` are separate
+variables. Required fields, defaults and [conditional fields](#conditional-fields) work the same
+in a row as anywhere else, and a list can be emptied completely, in which case the loop simply
+renders nothing. A row's checkbox only shows and hides fields in its own row: with
+`interface.B_access` and `interface.N_access_vlan_id`, ticking "Access" on one interface unfolds
+that interface's VLAN and no other.
+
+The rules are strict for now, and a template that breaks one is rejected with an error saying which:
+
+- The list may only appear as `{% for x in L_name %}`: no `{{ L_name | length }}`, no
+  `{% if L_name %}`.
+- Inside the loop, use `x.<FIELD>`, never `x` on its own.
+- Row fields are `S_`, `P_`, `N_` or `B_`. Radio groups and lists inside a row aren't supported.
+- The loop has to be in the template itself, not in an `{% include %}`d or `{% extends %}`ed one.
+- A list takes at most 100 rows.
+
+Adding and removing rows needs JavaScript. DynaForm is meant for internal use, so it doesn't
+provide a fallback for that.
+
 ### Your own Jinja logic
 
 The prefix rule applies only to variables the template *doesn't define itself*. Anything Jinja
@@ -139,51 +220,6 @@ A variable inside a template imported `without context` (Jinja's default for `{%
 not fillable from this form — it renders with whatever that template's own scope gives it, so it
 never becomes a field. Add `with context` to change that.
 
-### Radio groups
-
-Radio variables are named `R_<group>_<option>`. The group name is the single word right after
-`R_` and may not contain underscores. All variables sharing a group render as one radio set, and
-in the rendered template exactly one of them is true:
-
-```jinja
-Favourite colour:
-{% if R_color_red %}red{% elif R_color_blue %}blue{% elif R_color_green %}green{% endif %}
-```
-
-That produces one "Color" group with Red / Blue / Green options.
-
-### Conditional fields
-
-A field is treated as a child of checkbox `B_<base>` when its own name (after the prefix) starts
-with `<base>_`. Children are hidden until the checkbox is ticked, and they're optional rather
-than required. If several checkboxes match, the longest base wins.
-
-```jinja
-Hello {{ S_username }}, age {{ N_user_age }}.
-{% if B_admin %}
-Admin: {{ S_admin_name }} / {{ P_admin_pass }}
-{% endif %}
-```
-
-Ticking **Admin** unfolds the "Admin name" and "Admin pass" inputs.
-
-A field used only in the checkbox's `{% else %}` branch works the other way round: it is shown
-while the box is unticked and swapped out when it is ticked. It is optional too.
-
-```jinja
-{% if B_access %}
-switchport access vlan {{ N_access_vlan_id }}
-{% else %}
-switchport trunk allowed vlan {{ S_vlan_list }}
-{% endif %}
-```
-
-"Vlan list" shows until **Access** is ticked, then "Access vlan id" takes its place. This is read
-from the template's structure rather than the names, so it only applies when the else branch
-runs exactly when the box is unticked: the test is the checkbox alone (`{% if B_access %}`, not
-`{% if not B_access %}`), there is no `{% elif %}`, and the field isn't used anywhere outside that
-branch.
-
 ### Default values
 
 Give a variable a default with Jinja's own [`default`
@@ -244,42 +280,6 @@ would have to rotate if it leaked — type those in instead.
 Before this existed, `default` in a DynaForm template did nothing: every variable was passed to
 the renderer whether or not its field was filled in, and the filter only fires on variables that
 are *undefined*. Such templates now behave as they read. Worth a look if you have any.
-
-### Lists
-
-An `L_` variable is a list the form lets you grow: each row is a small group of fields, and the
-template loops over the rows. Read each row's fields off the loop variable:
-
-```jinja
-server {
-    listen {{ N_port }};
-{% for loc in L_locations %}
-    location {{ loc.S_path }} {
-        proxy_pass http://127.0.0.1:{{ loc.N_port | default(8080) }};
-    }
-{% endfor %}
-}
-```
-
-The form shows "Locations" with one row of "Path" and "Port", an **Add row** button and a
-**Remove** button on each row. Inside a row, `loc.N_port` and the top-level `N_port` are separate
-variables. Required fields, defaults and [conditional fields](#conditional-fields) work the same
-in a row as anywhere else, and a list can be emptied completely, in which case the loop simply
-renders nothing. A row's checkbox only shows and hides fields in its own row: with
-`interface.B_access` and `interface.N_access_vlan_id`, ticking "Access" on one interface unfolds
-that interface's VLAN and no other.
-
-The rules are strict for now, and a template that breaks one is rejected with an error saying which:
-
-- The list may only appear as `{% for x in L_name %}`: no `{{ L_name | length }}`, no
-  `{% if L_name %}`.
-- Inside the loop, use `x.<FIELD>`, never `x` on its own.
-- Row fields are `S_`, `P_`, `N_` or `B_`. Radio groups and lists inside a row aren't supported.
-- The loop has to be in the template itself, not in an `{% include %}`d or `{% extends %}`ed one.
-- A list takes at most 100 rows.
-
-Adding and removing rows needs JavaScript. DynaForm is meant for internal use, so it doesn't
-provide a fallback for that.
 
 ## Template directory
 
