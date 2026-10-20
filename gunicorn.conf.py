@@ -12,6 +12,10 @@ errorlog = "-"
 # A worker stuck rendering a runaway template ({% for %} nested in
 # {% for %}) is killed and replaced after this many seconds.
 timeout = int(os.environ.get("GUNICORN_TIMEOUT", "10"))
+# No gunicornc control socket: nothing in the container uses it, and its
+# default home ($HOME/.gunicorn) isn't writable when the container runs as
+# another uid.
+control_socket_disable = True
 
 # Caps each worker's address space, so a template that asks for gigabytes
 # ("a" * 10**9) gets a MemoryError -- shown on the form like any other render
