@@ -4,25 +4,25 @@ A small Flask web app that turns a Jinja2 template into an HTML form, then rende
 template with whatever you type in.
 
 Give it a `.j2` file (or paste the text, or pick one from a directory you mounted), and
-DynaForm reads the undeclared variables out of the template, builds a Bootstrap form with one
+DynaForm reads the undeclared variables out of the template, builds an HTML form with one
 input per variable, and renders the filled-in result. The input type of each field comes from a
-prefix on the variable name, so the template itself is the only thing you have to write.
+specific prefix on the variable name, so the template itself is the only thing you have to write.
 
 A file you pick is read in the browser and shown in the editor, so you can look it over and
-change it before the form is built -- with scripting enabled the file itself never leaves your
-machine.
+change it before the form is built. If your browser has JavaScript enabled, the file itself 
+never leaves your machine.
 
 From the result page you can copy the rendered output to your clipboard or save it as a `.txt`
-file. Both options run in the browser against the text already on the page, so the output never travels
+file. Both options run in the browser against what is already on the page, so the output never travels
 back to the server.
 
-Nothing is stored. There is no database, no session store, and no user content written to disk.
-The template source is carried between the two requests in a hidden form field. The template
-directory is only ever read from.
+DynaForm stores nothing persistently. There is no database, no session store, and no user content is
+written to disk. The template source is carried between the two requests in a hidden form field. 
+The optional template dictionary is only ever read from.
 
 ## Template syntax
 
-Every undeclared variable in the template must be named `<PREFIX>_<name>`. A template containing
+Every undeclared variable in the template must be named `<PREFIX>_<NAME>`. A template containing
 a variable that doesn't match is rejected with an error naming the offending variables.
 
 | Prefix | Form field | Example        |
@@ -35,109 +35,96 @@ a variable that doesn't match is rejected with an error naming the offending var
 | `L_`   | list of rows | `L_locations` |
 
 Labels are derived from the name: the prefix is dropped, underscores become spaces, and only the
-first word is capitalized (`N_user_age` -> "User age"); the `label` filter below overrides that. Fields appear in the order the variables
-first occur in the template source.
+first word is capitalized (`N_user_age` -> "User age"); the `label` filter below overrides that.
+Fields appear in the order the variables first occur in the template source.
 
-### Your own Jinja logic
+### Radio groups
 
-The prefix rule applies only to variables the template *doesn't define itself*. Anything Jinja
-declares as it goes — `{% set %}`, loop variables, macro arguments, `{% with %}` — needs no prefix
-and never becomes a form field. So does Jinja's own functions: `range()`, `namespace()`, `dict()`,
-`loop.index`, every filter and test (bar DynaForm's own, above).
-
-That means ordinary templating works as you'd expect, with the form asking only for the
-`S_`/`P_`/`N_`/`B_`/`R_`/`L_` variables:
+Radio variables are named `R_<GROUP>_<OPTION>`. The group name is the single word right after
+`R_` and may not contain underscores. All variables sharing a group will render as one radio set, 
+and in the rendered template exactly one of them is true:
 
 ```jinja
-{% set scheme = "https" if B_tls else "http" %}
-upstream {{ S_service }} {
-{% for port in [8080, 8443] %}
-    server {{ S_host }}:{{ port }};
+Favourite colour:
+{% if R_color_red %}red{% elif R_color_blue %}blue{% elif R_color_green %}green{% endif %}
+```
+
+That produces one "Color" group with Red / Blue / Green options.
+
+### Conditional fields
+
+Conditional fields show as checkboxes in the generated form. In addition to simple booleans however,
+they also act as a way to include optional additional child fields that are only shown when a 
+checkbox is checked. 
+
+A field is treated as a child of checkbox `B_<BASE>` when its own name (after the prefix) starts
+with `<BASE>_`. Children are hidden until the checkbox is ticked, and they're always optional. 
+If several checkboxes match, the longest base wins.
+
+```jinja
+Hello {{ S_username }}, age {{ N_user_age }}.
+{% if B_admin %}
+Admin: {{ S_admin_name }} / {{ P_admin_pass }}
+{% endif %}
+```
+
+Ticking **Admin** unfolds the "Admin name" and "Admin pass" inputs.
+
+If a conditional variable contains an `{% else %}` branch, the defined child variables under this branch 
+work the other way round: it is shown while the box is *unticked* and swapped out when it is ticked. 
+These variables are optional too.
+
+```jinja
+{% if B_access %}
+switchport access vlan {{ N_access_vlan_id }}
+{% else %}
+switchport trunk allowed vlan {{ S_vlan_list }}
+{% endif %}
+```
+
+"Vlan list" shows until **Access** is ticked, then "Access vlan id" takes its place.
+These are the conditions for this field-swapping function:
+- It only applies to conditional statements like `{% if B_access %}`, not negated statements like 
+`{% if not B_access %}`
+- There is no support for `{% elif %}`, since a checkbox is binary and can only ever be either "true" or "false"
+- The child field inside the else-branch cannot be used anywhere outside that branch. If it were, then that 
+other definition would be added to the form instead as a globally undeclared variable.
+
+### Lists
+
+An `L_` variable is a list that you can add rows to. Each row is a unit of grouped fields, and the
+template loops over the rows when rendered. Read each row's fields off the loop variable:
+
+```jinja
+server {
+    listen {{ N_port }};
+{% for loc in L_locations %}
+    location {{ loc.S_path }} {
+        proxy_pass http://127.0.0.1:{{ loc.N_port | default(8080) }};
+    }
 {% endfor %}
 }
-listen {{ scheme }}://{{ S_host }};
 ```
 
-`scheme` and `port` are the template's own. The form asks for **Service**, **Host** and **Tls**.
+The form shows "Locations" with one row of "Path" and "Port", an **Add row** button and a
+**Remove** button on each row. Inside a row, `loc.N_port` and the top-level `N_port` are separate
+variables. Required fields, defaults and [conditional fields](#conditional-fields) work the same
+in a row as anywhere else, and a list can be emptied completely, in which case the loop simply
+renders nothing. A row's checkbox only shows and hides fields in its own row: with
+`interface.B_access` and `interface.N_access_vlan_id`, ticking "Access" on one interface unfolds
+that interface's VLAN and no other.
 
-One thing is refused: a variable that is never defined anywhere and carries no prefix.
+The rules are strict for now, and a template that breaks one is rejected with an error. These 
+are the conditions for this list function:
 
-```jinja
-Hello {{ username }}
-```
+- The list may only appear as `{% for x in L_name %}`: no `{{ L_name | length }}`, no
+  `{% if L_name %}`.
+- Inside the loop, use `x.<FIELD>`, never `x` on its own.
+- Supported row fields are `S_`, `P_`, `N_` or `B_`. Radio groups and nested lists inside a row aren't supported.
+- The loop has to be in the template itself, not taken from an `{% include %}` or `{% extends %}`.
+- A list takes at most 100 rows.
 
-> Unrecognized variable name(s): username. Every variable must start with S_, P_, N_, B_, or R_.
-
-This is to prevent forgotten prefixed which would otherwise leave
-you with a form missing a field and output with a silent blank in it. Either prefix the name so it
-becomes a field (`S_username`), or define it in the template with `{% set %}`.
-
-#### Templates from other systems
-
-Variables belonging to something else - like Ansible, Helm or a CI system - would be consumed by this
-render and come out empty. Wrap them in `{% raw %}` to pass them through untouched:
-
-```jinja
-server {{ S_host }}
-inventory {% raw %}{{ ansible_hostname }}{% endraw %}
-```
-
-renders as `server example.com` and `inventory {{ ansible_hostname }}`, leaving the second
-template's variables for the second template's renderer.
-
-#### Reusing templates
-
-With `TEMPLATE_DIR` configured (see [Template directory](#template-directory)), a template can
-pull in others from that same directory with `{% extends %}`, `{% include %}`, `{% import %}` and
-`{% from ... import %}` like ordinary Jinja, resolved against the directory with no reach
-outside of it.
-
-Here's a base template with a block, and a child that fills it in:
-
-```jinja
-{# base.j2 #}
-upstream {{ S_service }} {
-{% block servers %}{% endblock %}
-}
-```
-
-```jinja
-{# child, typed or pasted into the editor #}
-{% extends "base.j2" %}
-{% block servers %}
-{% include "_header.j2" %}
-server {{ S_host }}:{{ N_port }};
-{% endblock %}
-```
-
-The form asks for **Service**, **Host** and **Port** — exactly the variables this render actually
-uses, whichever templates they come from. A base's own block that the child overrides without
-calling `{{ super() }}` never renders, so nothing is asked for it; call `super()` and the base's
-fields join the child's.
-
-Only the **child** goes in the editor and travels in the hidden field between the two requests —
-the same two-request model as normal. Bases and partials stay on disk and are read fresh on every
-request, so an edit to `_base.j2` shows up the next time the form is built or the template is
-rendered, no restart needed.
-
-**A file whose name starts with `_` is loadable but left out of the picker** — a listing
-convention for partials meant to be pulled in with `{% include %}`/`{% import %}` rather than
-chosen directly. Nothing is stopping you from using other "non-parial" templates in the directory
-to extend from, the underscore is only for hiding it from the select element.
-
-A few things are refused, all before anything renders:
-
-- **A dynamically named reference** (`{% include S_choice %}`) — which template `S_choice` is can't be
-  known until render, so the form could never know what fields it needs.
-- **A reference cycle** — `a.j2` extending `b.j2` extending `a.j2`).
-- **Reuse more than 10 templates deep, or touching more than 50 templates** — provisional limits
-  against a runaway or pathological graph.
-- **A referenced template that isn't in the directory**, or **no `TEMPLATE_DIR` configured at
-  all**
-
-A variable inside a template imported `without context` (Jinja's default for `{% import %}`) is
-not fillable from this form — it renders with whatever that template's own scope gives it, so it
-never becomes a field. Add `with context` to change that.
+Adding and removing rows requires JavaScript.
 
 ### Filters for the form
 
@@ -174,50 +161,105 @@ Radio sets and lists can be grouped too: put `group` on any one option of a radi
 list's loop, `{% for loc in L_locations | group("Web") %}`. A conditional field stays with its
 checkbox's group unless it names its own. Fields inside a list row can't be grouped.
 
-### Radio groups
+### Your own Jinja logic
 
-Radio variables are named `R_<group>_<option>`. The group name is the single word right after
-`R_` and may not contain underscores. All variables sharing a group render as one radio set, and
-in the rendered template exactly one of them is true:
+The prefix rule applies only to variables the template *doesn't define itself*. Anything Jinja
+declares as it goes - like `{% set %}`, loop variables, macro arguments, `{% with %}` - needs no prefix
+and never becomes a form field. So does Jinja's own functions: `range()`, `namespace()`, `dict()`,
+`loop.index`, every filter and test (bar DynaForm's own, above).
 
-```jinja
-Favourite colour:
-{% if R_color_red %}red{% elif R_color_blue %}blue{% elif R_color_green %}green{% endif %}
-```
-
-That produces one "Color" group with Red / Blue / Green options.
-
-### Conditional fields
-
-A field is treated as a child of checkbox `B_<base>` when its own name (after the prefix) starts
-with `<base>_`. Children are hidden until the checkbox is ticked, and they're optional rather
-than required. If several checkboxes match, the longest base wins.
+That means ordinary templating works as you'd expect, with the form asking only for the
+`S_`/`P_`/`N_`/`B_`/`R_`/`L_` variables:
 
 ```jinja
-Hello {{ S_username }}, age {{ N_user_age }}.
-{% if B_admin %}
-Admin: {{ S_admin_name }} / {{ P_admin_pass }}
-{% endif %}
+{% set scheme = "https" if B_tls else "http" %}
+upstream {{ S_service }} {
+{% for port in [8080, 8443] %}
+    server {{ S_host }}:{{ port }};
+{% endfor %}
+}
+listen {{ scheme }}://{{ S_host }};
 ```
 
-Ticking **Admin** unfolds the "Admin name" and "Admin pass" inputs.
+`scheme` and `port` are the template's own. The form asks for **Service**, **Host** and **Tls**.
 
-A field used only in the checkbox's `{% else %}` branch works the other way round: it is shown
-while the box is unticked and swapped out when it is ticked. It is optional too.
+One thing is refused: a variable that is never defined anywhere and carries no prefix.
 
 ```jinja
-{% if B_access %}
-switchport access vlan {{ N_access_vlan_id }}
-{% else %}
-switchport trunk allowed vlan {{ S_vlan_list }}
-{% endif %}
+Hello {{ username }}
 ```
 
-"Vlan list" shows until **Access** is ticked, then "Access vlan id" takes its place. This is read
-from the template's structure rather than the names, so it only applies when the else branch
-runs exactly when the box is unticked: the test is the checkbox alone (`{% if B_access %}`, not
-`{% if not B_access %}`), there is no `{% elif %}`, and the field isn't used anywhere outside that
-branch.
+> Unrecognized variable name(s): username. Every variable must start with S_, P_, N_, B_, R_ or L_.
+
+This is to prevent forgotten prefixes which would otherwise leave
+you with a form missing a field and output with a silent blank in it. Either prefix the name so it
+becomes a field (`S_username`), or define it in the template with `{% set %}`.
+
+#### Reusing templates
+
+With `TEMPLATE_DIR` configured (see [Template directory](#template-directory)), a template can
+pull in others from that same directory with `{% extends %}`, `{% include %}`, `{% import %}` and
+`{% from ... import %}` like ordinary Jinja, resolved against the directory with no reach
+outside of it.
+
+Here's a base template with a block, and a child that fills it in:
+
+```jinja
+{# base.j2 #}
+upstream {{ S_service }} {
+{% block servers %}{% endblock %}
+}
+```
+
+```jinja
+{# child, typed or pasted into the editor #}
+{% extends "base.j2" %}
+{% block servers %}
+{% include "_header.j2" %}
+server {{ S_host }}:{{ N_port }};
+{% endblock %}
+```
+
+The form asks for **Service**, **Host** and **Port**, exactly the variables this render actually
+uses, whichever templates they come from. A base's own block that the child overrides without
+calling `{{ super() }}` never renders, so nothing is asked for it; call `super()` and the base's
+fields join the child's.
+
+Only the **child** goes in the editor and travels in the hidden field between the two requests. 
+Bases and partials stay on disk and are read fresh on every request, so an edit to `_base.j2` 
+shows up the next time the form is built or the template is rendered with no restart needed.
+
+**A file whose name starts with `_` is loadable but left out of the picker**. This is a listing
+convention for partials meant to be pulled in with `{% include %}`/`{% import %}` rather than
+chosen directly. Nothing is stopping you from using other "non-parial" templates in the directory
+to extend from, the underscore is only for hiding it from the select element.
+
+A few things are refused, all before anything renders:
+
+- **A dynamically named reference** (`{% include S_choice %}`) — which template `S_choice` is can't be
+  known until render, so the form could never know what fields it needs.
+- **A reference cycle** — `a.j2` extending `b.j2` extending `a.j2`).
+- **Reuse more than 10 templates deep, or touching more than 50 templates** — provisional limits
+  against a runaway or pathological graph.
+- **A referenced template that isn't in the directory**, or **no `TEMPLATE_DIR` configured at
+  all**
+
+A variable inside a template imported `without context` (Jinja's default for `{% import %}`) is
+not fillable from this form — it renders with whatever that template's own scope gives it, so it
+never becomes a field. Add `with context` to change that.
+
+#### Templates from other systems
+
+Variables belonging to something else - like Ansible, Helm or a CI system - would be consumed by this
+render and come out empty. Wrap them in `{% raw %}` to pass them through untouched:
+
+```jinja
+server {{ S_host }}
+inventory {% raw %}{{ ansible_hostname }}{% endraw %}
+```
+
+renders as `server example.com` and `inventory {{ ansible_hostname }}`, leaving the second
+template's variables for the second template's renderer.
 
 ### Default values
 
@@ -279,42 +321,6 @@ would have to rotate if it leaked — type those in instead.
 Before this existed, `default` in a DynaForm template did nothing: every variable was passed to
 the renderer whether or not its field was filled in, and the filter only fires on variables that
 are *undefined*. Such templates now behave as they read. Worth a look if you have any.
-
-### Lists
-
-An `L_` variable is a list the form lets you grow: each row is a small group of fields, and the
-template loops over the rows. Read each row's fields off the loop variable:
-
-```jinja
-server {
-    listen {{ N_port }};
-{% for loc in L_locations %}
-    location {{ loc.S_path }} {
-        proxy_pass http://127.0.0.1:{{ loc.N_port | default(8080) }};
-    }
-{% endfor %}
-}
-```
-
-The form shows "Locations" with one row of "Path" and "Port", an **Add row** button and a
-**Remove** button on each row. Inside a row, `loc.N_port` and the top-level `N_port` are separate
-variables. Required fields, defaults and [conditional fields](#conditional-fields) work the same
-in a row as anywhere else, and a list can be emptied completely, in which case the loop simply
-renders nothing. A row's checkbox only shows and hides fields in its own row: with
-`interface.B_access` and `interface.N_access_vlan_id`, ticking "Access" on one interface unfolds
-that interface's VLAN and no other.
-
-The rules are strict for now, and a template that breaks one is rejected with an error saying which:
-
-- The list may only appear as `{% for x in L_name %}`: no `{{ L_name | length }}`, no
-  `{% if L_name %}`.
-- Inside the loop, use `x.<FIELD>`, never `x` on its own.
-- Row fields are `S_`, `P_`, `N_` or `B_`. Radio groups and lists inside a row aren't supported.
-- The loop has to be in the template itself, not in an `{% include %}`d or `{% extends %}`ed one.
-- A list takes at most 100 rows.
-
-Adding and removing rows needs JavaScript. DynaForm is meant for internal use, so it doesn't
-provide a fallback for that.
 
 ## Template directory
 
@@ -740,33 +746,6 @@ weekly run scans the *published* `:latest` image instead, which catches a CVE di
 image shipped, when nothing in the repository has changed. Its findings are filed under the
 release tag that image was built from (read from the image's OCI labels), not under `main`. It can
 also be run on demand from the Actions tab.
-
-## Contributing
-
-A few conventions the existing code follows:
-
-- Both parsing and rendering of user-supplied templates go through Jinja2's
-  `SandboxedEnvironment`. Keep it that way.
-- Form field classes come from the fixed `FIELD_CLASSES` whitelist in `app/forms.py`, keyed by the
-  validated prefix letter. Never build a field class from user input.
-- The rendered output is escaped by Flask's own Jinja environment in `result.html`, which is what
-  prevents reflected XSS. It is deliberately a different environment from the sandboxed one.
-- Never log submitted field values; a `P_` field is a password by definition.
-- No persistence: no database, no session storage of template content, no writing user content to
-  disk. `TEMPLATE_DIR` is read-only. Edits to a chosen template are never written to the file.
-- Nothing from a request is ever joined onto a filesystem path. `read_template()` matches the
-  submitted name against the directory scan instead, so traversal has nothing to traverse.
-- Modules carry type hints and `from __future__ import annotations`.
-
-To contribute:
-
-1. Fork and branch off `main`.
-2. Add or update tests alongside the change. Parser changes belong in
-   `tests/test_template_parser.py`, and anything touching a route needs a `tests/test_routes.py`
-   case.
-3. Run `pytest` and check the change in a browser end to end (a template using every prefix,
-   including a radio group and a `B_`-conditional pair).
-4. Open a pull request describing what changed and why.
 
 ## License
 
