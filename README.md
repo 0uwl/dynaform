@@ -35,7 +35,7 @@ a variable that doesn't match is rejected with an error naming the offending var
 | `L_`   | list of rows | `L_locations` |
 
 Labels are derived from the name: the prefix is dropped, underscores become spaces, and only the
-first word is capitalized (`N_user_age` -> "User age"). Fields appear in the order the variables
+first word is capitalized (`N_user_age` -> "User age"); the `label` filter below overrides that. Fields appear in the order the variables
 first occur in the template source.
 
 ### Your own Jinja logic
@@ -43,7 +43,7 @@ first occur in the template source.
 The prefix rule applies only to variables the template *doesn't define itself*. Anything Jinja
 declares as it goes — `{% set %}`, loop variables, macro arguments, `{% with %}` — needs no prefix
 and never becomes a form field. So does Jinja's own functions: `range()`, `namespace()`, `dict()`,
-`loop.index`, every filter and test.
+`loop.index`, every filter and test (bar DynaForm's own, above).
 
 That means ordinary templating works as you'd expect, with the form asking only for the
 `S_`/`P_`/`N_`/`B_`/`R_`/`L_` variables:
@@ -138,6 +138,41 @@ A few things are refused, all before anything renders:
 A variable inside a template imported `without context` (Jinja's default for `{% import %}`) is
 not fillable from this form — it renders with whatever that template's own scope gives it, so it
 never becomes a field. Add `with context` to change that.
+
+### Filters for the form
+
+A few filters describe how a variable looks on the form. They are DynaForm's own: at render time
+they hand the value back untouched, so they never change the output, and they combine with each
+other and with `default` in any order.
+
+```jinja
+{{ S_host | label("Hostname") | help("As in DNS") | placeholder("example.com") | group("Server") }}
+{{ N_port | group("Server") | required }}
+```
+
+| Filter                | Effect                                                              |
+|-----------------------|---------------------------------------------------------------------|
+| `label("...")`        | Replaces the derived label (on a radio option, that option's label) |
+| `help("...")`         | Small help text under the field                                     |
+| `placeholder("...")`  | Placeholder text in the input (`S_`, `P_`, `N_`)                    |
+| `required`            | Must be filled in, even if it has a `default`                       |
+| `optional`            | May be left blank (it then renders empty)                           |
+| `group("...")`        | Puts the field in a titled box (a fieldset)                         |
+
+- The argument must be a plain text literal, not a variable or expression.
+- If a variable appears more than once, the first occurrence's filters win.
+- A filter that doesn't apply to a kind of variable (`required` on a checkbox) is an error.
+- `required` has no effect on a conditional field, which is only shown when its checkbox is
+  ticked and so can't be required.
+- These names are taken: a Jinja filter of your own with one of them would clash.
+
+#### Groups
+
+Everything given the same `group` name lands in one box with that name as its heading, placed
+where the first of its members appears; the others are moved into it, so a group is never split.
+Radio sets and lists can be grouped too: put `group` on any one option of a radio set, or on a
+list's loop, `{% for loc in L_locations | group("Web") %}`. A conditional field stays with its
+checkbox's group unless it names its own. Fields inside a list row can't be grouped.
 
 ### Radio groups
 
@@ -644,6 +679,8 @@ The suite has no external dependencies and needs no running server:
 - `tests/test_template_library.py` — scanning the template directory: extensions, subdirectories,
   hidden files, the size cap, and symlinks aimed outside it.
 - `tests/test_forms.py` — dynamic WTForms construction: field classes, labels, validators.
+- `tests/test_filters.py` — the `label`/`help`/`placeholder`/`required`/`optional`/`group` filters:
+  parsing, validators, and the grouped page.
 - `tests/test_routes.py` — the full HTTP path: parse → dynamic form → render.
 
 `tests/conftest.py` sets a test `SECRET_KEY` and disables CSRF for the test client.

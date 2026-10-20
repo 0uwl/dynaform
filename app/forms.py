@@ -60,11 +60,13 @@ def _field_for(spec: FieldSpec):
     if spec.prefix == "B":
         validators = []
     elif spec.parent is not None:
-        # Conditional children are Optional rather than
+        # Conditional children (even a |required one: it may be hidden) are Optional rather than
         # cross-validated against their parent checkbox's state. Add
         # server-side "required if parent checked" if that's ever needed.
         validators = [Optional()]
-    elif spec.has_default:
+    elif spec.required:
+        validators = [InputRequired()]
+    elif spec.required is False or spec.has_default:
         # A default makes the field optional by implication: submitting it
         # blank is how you ask for the default, so it cannot also be
         # required. Nothing in the template says so, which is why the
@@ -75,7 +77,8 @@ def _field_for(spec: FieldSpec):
     # default=None is what WTForms already assumes, so an undefaulted
     # field is built exactly as before. A PasswordField never renders its
     # value, so a P_ default prefills without reaching the markup.
-    return field_cls(spec.label, validators=validators, default=spec.default)
+    render_kw = {"placeholder": spec.placeholder} if spec.placeholder else None
+    return field_cls(spec.label, validators=validators, default=spec.default, render_kw=render_kw)
 
 
 def build_dynamic_form(parsed: ParsedTemplate) -> type[FlaskForm]:
