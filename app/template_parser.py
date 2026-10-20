@@ -29,6 +29,18 @@ from jinja2.sandbox import SandboxedEnvironment
 MAX_POWER_BITS = 100_000
 
 
+def _identity(value, *args, **kwargs):
+    return value
+
+
+# Per-variable metadata, written as filters: ``{{ S_host | group("Server") }}``.
+# They only mark the variable for the form; at render time they hand the value
+# back untouched (an undefined one stays undefined, so `default` still works).
+META_FILTERS = {
+    name: _identity for name in ("label", "help", "placeholder", "required", "optional", "group")
+}
+
+
 class BoundedSandbox(SandboxedEnvironment):
     """The sandbox, minus integer `**` results big enough to pin a worker.
 
@@ -45,6 +57,10 @@ class BoundedSandbox(SandboxedEnvironment):
     """
 
     intercepted_binops = frozenset({"**"})
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.filters.update(META_FILTERS)
 
     def call_binop(self, context, operator, left, right):
         if (
@@ -96,6 +112,12 @@ class FieldSpec:
     # Shown while the `parent` checkbox is *un*ticked: the field is only used
     # in the {% else %} of {% if B_<parent> %}. See `_else_children`.
     show_when_unchecked: bool = False
+    help: str | None = None
+    placeholder: str | None = None
+    # True from ``| required`` (beats a default), False from ``| optional``,
+    # None to infer from parent / default.
+    required: bool | None = None
+    group: str | None = None  # fieldset heading, from ``| group("...")``
 
 
 @dataclass
@@ -106,6 +128,7 @@ class RadioGroup:
     options: list[tuple[str, str]] = dc_field(default_factory=list)  # (value, label)
     parent: str | None = None
     default: str | None = None  # option value preselected by a truthy default
+    group: str | None = None  # fieldset heading, from ``| group("...")`` on an option
 
 
 @dataclass
@@ -114,6 +137,7 @@ class ListSpec:
     label: str
     source_pos: int
     fields: list[FieldSpec]  # one row's fields
+    group: str | None = None
 
 
 @dataclass
@@ -128,36 +152,116 @@ def _label_for(rest: str) -> str:
     return " ".join([first.capitalize(), *others])
 
 
-def _defaults_in(
+_TEXT_FILTERS = frozenset({"label", "help", "placeholder", "group"})
+_FLAG_FILTERS = frozenset({"required", "optional"})
+# These hand the value back as it came, so a filter further out still sees the
+# variable itself: ``S_x | label("X") | default("a")`` defaults S_x.
+_TRANSPARENT = _DEFAULT_FILTERS | META_FILTERS.keys()
+
+# The metadata filters each kind of variable takes (`default` is always fine).
+# R_ means one option of a radio group; L_ the iterable of a list loop.
+_ALLOWED = {
+    "S": _TEXT_FILTERS | _FLAG_FILTERS,
+    "P": _TEXT_FILTERS | _FLAG_FILTERS,
+    "N": _TEXT_FILTERS | _FLAG_FILTERS,
+    "B": frozenset({"label", "help", "group"}),
+    "R": frozenset({"label", "group"}),
+    "L": frozenset({"label", "group"}),
+}
+
+
+def _bare_name(node: nodes.Node) -> str | None:
+    return node.name if isinstance(node, nodes.Name) else None
+
+
+def _filter_value(node: nodes.Filter):
+    """What a metadata filter carries: its text, True for a flag, or for
+    `default` the literal (None if it is not one)."""
+    if node.name in _TEXT_FILTERS:
+        arg = node.args[0] if len(node.args) == 1 else None
+        if (
+            node.kwargs or node.dyn_args or node.dyn_kwargs
+            or not isinstance(arg, nodes.Const)
+            or not isinstance(arg.value, str) or not arg.value.strip()
+        ):
+            raise TemplateValidationError(
+                f'|{node.name} takes one non-empty text literal, e.g. |{node.name}("Server").'
+            )
+        return arg.value
+    if node.name in _FLAG_FILTERS:
+        if node.args or node.kwargs or node.dyn_args or node.dyn_kwargs:
+            raise TemplateValidationError(f"|{node.name} takes no arguments.")
+        return True
+    if node.args and isinstance(node.args[0], nodes.Const):
+        return node.args[0].value
+    return None
+
+
+def _merge_meta(into: dict[str, object], new: dict[str, object]) -> None:
+    """First occurrence wins -- except that a literal `default` beats an
+    earlier non-literal one, which only says the field is optional."""
+    for name, value in new.items():
+        if name not in into or (name == "default" and into[name] is None):
+            into[name] = value
+
+
+def _filters_in(
     ast: nodes.Node,
-    key: Callable[[nodes.Node], str | None] = lambda n: n.name if isinstance(n, nodes.Name) else None,
-) -> tuple[dict[str, str | int | float | bool], set[str]]:
-    """Find the variables carrying a ``default`` filter, and its literal value.
+    key: Callable[[nodes.Node], str | None] = _bare_name,
+) -> dict[str, dict[str, object]]:
+    """Find the metadata (and `default`) filters on each variable.
 
-    Returns the literals keyed by variable, and the names of *every* variable
-    with a default whether or not the value could be read. For example: nothing 
-    can be shown for ``{{ S_x | default(S_other) }}`` in a form
-    built before anything is rendered, but the field still technically has a default, so
-    it still may be left blank and Jinja still resolves it at render time, so it must
-    instead be skipped entirely
+    Returns {variable: {filter: value}}, see `_filter_value`. The presence of
+    "default" is wider than a literal value: nothing can be shown for
+    ``{{ S_x | default(S_other) }}`` before anything is rendered, but the
+    field still technically has a default, so it may be left blank and Jinja
+    resolves it at render time.
 
-    The first literal for a variable wins. 
-    Note: Jinja applies each occurrence independently, so a template with two
-    different defaults for one variable renders both.
+    Filters stacked on one variable are all found. Jinja applies each
+    occurrence independently, so with a variable repeated the first one wins.
 
-    `key` names the variable a filtered node stands for, or None to skip it;
-    list rows pass one that reads ``loc.S_x`` as ``S_x``.
+    `key` names the variable a node stands for, or None to skip it; list rows
+    pass one that reads ``loc.S_x`` as ``S_x``.
     """
-    literals: dict[str, str | int | float | bool] = {}
-    defaulted: set[str] = set()
+    found: dict[str, dict[str, object]] = {}
     for node in ast.find_all(nodes.Filter):
-        name = key(node.node)
-        if node.name not in _DEFAULT_FILTERS or name is None:
+        if node.name not in _TRANSPARENT:
             continue
-        defaulted.add(name)
-        if node.args and isinstance(node.args[0], nodes.Const):
-            literals.setdefault(name, node.args[0].value)
-    return literals, defaulted
+        base = node.node
+        while isinstance(base, nodes.Filter) and base.name in _TRANSPARENT:
+            base = base.node
+        if (var := key(base)) is not None:
+            name = "default" if node.name in _DEFAULT_FILTERS else node.name
+            _merge_meta(found.setdefault(var, {}), {name: _filter_value(node)})
+    return found
+
+
+def _check_meta(var: str, meta: dict[str, object], kind: str, in_row: bool = False) -> None:
+    for name in meta:
+        if name == "default":
+            continue
+        if name not in _ALLOWED[kind] or (in_row and name == "group"):
+            where = "in a list row" if in_row and name == "group" else "on this kind of variable"
+            raise TemplateValidationError(f"|{name} cannot be used {where} ({var}).")
+    if "required" in meta and "optional" in meta:
+        raise TemplateValidationError(f"{var} cannot be both |required and |optional.")
+
+
+def _apply_meta(spec: FieldSpec, meta: dict[str, object]) -> None:
+    spec.has_default = "default" in meta
+    spec.default = meta.get("default")
+    spec.label = meta.get("label", spec.label)
+    spec.help = meta.get("help")
+    spec.placeholder = meta.get("placeholder")
+    spec.group = meta.get("group")
+    spec.required = True if "required" in meta else False if "optional" in meta else None
+
+
+def _iterable_name(node: nodes.Node) -> nodes.Node:
+    """The ``L_`` name under any metadata filters: ``L_x | group("Y")``."""
+    while isinstance(node, nodes.Filter) and node.name in META_FILTERS:
+        node = node.node
+    return node
 
 
 # Prefixes a list row may hold. Radio groups span several variables and lists
@@ -165,7 +269,9 @@ def _defaults_in(
 _ROW_PREFIXES = frozenset("SPNB")
 
 
-def _list_specs(ast: nodes.Template, source: str, list_names: set[str]) -> list[ListSpec]:
+def _list_specs(
+    ast: nodes.Template, source: str, list_names: set[str], meta: dict[str, dict[str, object]]
+) -> list[ListSpec]:
     """Collect the row fields of every ``L_`` list from its ``for`` loops.
 
     Strict on purpose: the list may only appear as a loop's iterable, and the
@@ -177,10 +283,11 @@ def _list_specs(ast: nodes.Template, source: str, list_names: set[str]) -> list[
     """
     loops: dict[str, list[nodes.For]] = {name: [] for name in list_names}
     for loop in ast.find_all(nodes.For):
-        if isinstance(loop.iter, nodes.Name) and loop.iter.name in loops:
-            loops[loop.iter.name].append(loop)
+        iterable = _iterable_name(loop.iter)
+        if isinstance(iterable, nodes.Name) and iterable.name in loops:
+            loops[iterable.name].append(loop)
 
-    iterables = {id(loop.iter) for found in loops.values() for loop in found}
+    iterables = {id(_iterable_name(loop.iter)) for found in loops.values() for loop in found}
     for name_node in ast.find_all(nodes.Name):
         if name_node.name in loops and id(name_node) not in iterables:
             raise TemplateValidationError(
@@ -195,6 +302,7 @@ def _list_specs(ast: nodes.Template, source: str, list_names: set[str]) -> list[
                 f"List '{name}' must be looped over in this template itself."
             )
         fields: dict[str, FieldSpec] = {}
+        row_meta: dict[str, dict[str, object]] = {}
         keyed_bodies = []  # (loop body, row-field key) for _else_children
         for loop in found:
             if not isinstance(loop.target, nodes.Name):
@@ -220,9 +328,10 @@ def _list_specs(ast: nodes.Template, source: str, list_names: set[str]) -> list[
                     f"(for example '{target}.S_name'), not '{target}' alone."
                 )
 
-            row_defaults, defaulted = _defaults_in(
+            for var, found_meta in _filters_in(
                 body, key=lambda n: n.attr if id(n) in getattr_ids else None
-            )
+            ).items():
+                _merge_meta(row_meta.setdefault(var, {}), found_meta)
 
             for g in attrs:
                 match = _NAME_RE.match(g.attr)
@@ -231,26 +340,29 @@ def _list_specs(ast: nodes.Template, source: str, list_names: set[str]) -> list[
                         f"List field '{target}.{g.attr}' must start with "
                         "S_, P_, N_, or B_."
                     )
-                spec = fields.setdefault(g.attr, FieldSpec(
+                fields.setdefault(g.attr, FieldSpec(
                     var_name=g.attr,
                     prefix=match.group("prefix"),
                     rest=match.group("rest"),
                     label=_label_for(match.group("rest")),
                     source_pos=_first_occurrence(f"{target}.{g.attr}", source),
                 ))
-                spec.has_default |= g.attr in defaulted
-                if spec.default is None:
-                    spec.default = row_defaults.get(g.attr)
 
         if not fields:
             raise TemplateValidationError(f"List '{name}' has no fields to fill in.")
+        for var, spec in fields.items():
+            _check_meta(f"{target}.{var}", row_meta.get(var, {}), spec.prefix, in_row=True)
+            _apply_meta(spec, row_meta.get(var, {}))
         _assign_parents(list(fields.values()), _else_children(keyed_bodies))
         rest = _NAME_RE.match(name).group("rest")
+        list_meta = meta.get(name, {})
+        _check_meta(name, list_meta, "L")
         specs.append(ListSpec(
             name=name,
-            label=_label_for(rest),
+            label=list_meta.get("label", _label_for(rest)),
             source_pos=_first_occurrence(name, source),
             fields=sorted(fields.values(), key=lambda f: f.source_pos),
+            group=list_meta.get("group"),
         ))
     return sorted(specs, key=lambda l: l.source_pos)
 
@@ -518,7 +630,12 @@ def parse_template(
             f"Template syntax error: {exc.message} (line {exc.lineno})"
         ) from exc
 
-    names = _RefWalker(resolve).collect(ast)
+    try:
+        names = _RefWalker(resolve).collect(ast)
+    except TemplateSyntaxError as exc:  # e.g. a filter that does not exist
+        raise TemplateValidationError(
+            f"Template error: {exc.message} (line {exc.lineno})"
+        ) from exc
 
     invalid = sorted(n for n in names if not _NAME_RE.match(n))
     if invalid:
@@ -529,21 +646,23 @@ def parse_template(
         )
 
     list_names = {n for n in names if n.startswith("L_")}
-    lists = _list_specs(ast, source, list_names)
+    meta = _filters_in(ast)
+    lists = _list_specs(ast, source, list_names, meta)
     names -= list_names
-
-    defaults, defaulted = _defaults_in(ast)
 
     fields: list[FieldSpec] = []
     groups: dict[str, RadioGroup] = {}
     # (position, option) per group, so the earliest truthy default wins once
     # the options have been sorted back into source order.
     radio_defaults: dict[str, list[tuple[int, str]]] = {}
+    radio_sections: dict[str, list[tuple[int, str]]] = {}
 
     for name in names:
         match = _NAME_RE.match(name)
         prefix, rest = match.group("prefix"), match.group("rest")
         pos = _first_occurrence(name, source)
+        var_meta = meta.get(name, {})
+        _check_meta(name, var_meta, prefix)
 
         if prefix == "R":
             radio_match = _RADIO_RE.match(rest)
@@ -560,26 +679,26 @@ def parse_template(
             # names comes from a set (arbitrary order), so options must carry
             # their own position and be sorted after the loop, not appended
             # in iteration order.
-            group.options.append((pos, option, _label_for(option)))
+            group.options.append((pos, option, var_meta.get("label", _label_for(option))))
+            if "group" in var_meta:
+                radio_sections.setdefault(group_name, []).append((pos, var_meta["group"]))
             group.source_pos = min(group.source_pos, pos)
             # A radio cannot be un-selected once one option is checked, so a
             # default here can only mean "start on this option" -- never a
             # fallback for an empty submission. A falsy default says nothing
             # about which option to start on, so only truthy ones count.
-            if defaults.get(name):
+            if var_meta.get("default"):
                 radio_defaults.setdefault(group_name, []).append((pos, option))
         else:
-            fields.append(
-                FieldSpec(
-                    var_name=name,
-                    prefix=prefix,
-                    rest=rest,
-                    label=_label_for(rest),
-                    source_pos=pos,
-                    default=defaults.get(name),
-                    has_default=name in defaulted,
-                )
+            spec = FieldSpec(
+                var_name=name,
+                prefix=prefix,
+                rest=rest,
+                label=_label_for(rest),
+                source_pos=pos,
             )
+            _apply_meta(spec, var_meta)
+            fields.append(spec)
 
     checkbox_bases = _assign_parents(fields, _else_children([(
         ast, lambda n: n.name if isinstance(n, nodes.Name) and n.ctx == "load" else None
@@ -589,6 +708,14 @@ def parse_template(
         # only ever be a *direct* child of a checkbox (R_admin_* under
         # B_admin), never nested via startswith like S_/P_/N_ fields are.
         group.parent = group.name if group.name in checkbox_bases else None
+        if group.name in radio_sections:
+            group.group = min(radio_sections[group.name])[1]
+
+    # A conditional field has no business leaving its checkbox's section.
+    sections = {f.rest: f.group for f in fields if f.prefix == "B"}
+    for spec in [*fields, *groups.values()]:
+        if spec.parent and spec.group is None:
+            spec.group = sections.get(spec.parent)
 
     fields.sort(key=lambda f: f.source_pos)
     radio_groups = sorted(groups.values(), key=lambda g: g.source_pos)
