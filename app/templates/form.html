@@ -8,12 +8,14 @@
       {{ bound(class="form-check-input") }}
       {{ bound.label(class="form-check-label") }}
     </div>
+    {% if spec.help %}<div class="form-text">{{ spec.help }}</div>{% endif %}
   {% else %}
     {{ bound.label(class="form-label") }}
     {{ bound(class="form-control" + (" is-invalid" if bound.errors else ""),
               autocomplete=("off" if spec.prefix == "P" else "on")) }}
     {# A template default arrives prefilled except for passwords.
        The label should say a default is set rather than printing it on screen#}
+    {% if spec.help %}<div class="form-text">{{ spec.help }}</div>{% endif %}
     {% if spec.has_default and spec.prefix == "P" %}
       <div class="form-text">
         The template sets a default for this field. Leave it blank to use it.
@@ -43,6 +45,53 @@
   </li>
 {% endmacro %}
 
+{# One radio set, list or plain field, wrapped for conditional.js. #}
+{% macro item_block(item) %}
+  {% set spec = item.spec %}
+  <div class="mb-3"{{ parent_attrs(spec) }}>
+
+    {% if item.kind == "radio" %}
+      {% set bound = form["R_" + spec.name] %}
+      <fieldset>
+        <legend class="col-form-label">{{ spec.label }}</legend>
+        {% for subfield in bound %}
+          <div class="form-check">
+            {{ subfield(class="form-check-input") }}
+            {{ subfield.label(class="form-check-label") }}
+          </div>
+        {% endfor %}
+      </fieldset>
+      {% for error in bound.errors %}
+        <div class="invalid-feedback d-block">{{ error }}</div>
+      {% endfor %}
+
+    {% elif item.kind == "list" %}
+      {% set bound = form[spec.name] %}
+      {# data-next starts past the highest index in use: rows removed
+         before a failed submit leave gaps, which FieldList accepts. #}
+      <fieldset data-list data-next="{{ bound.last_index + 1 }}">
+        <legend class="col-form-label">{{ spec.label }}</legend>
+        <ul class="list-unstyled mb-2" data-rows>
+          {% for entry in bound %}{{ row(spec, entry.form) }}{% endfor %}
+        </ul>
+        {# "__INDEX__" is what list_rows.js swaps a real index into. The
+           trailing "-" is explicit: WTForms only adds one to a prefix
+           that doesn't already end in "_", and this one does. #}
+        <template>{{ row(spec, form.row_forms[spec.name](prefix=spec.name ~ "-__INDEX__-")) }}</template>
+        <button type="button" class="btn btn-outline-secondary btn-sm" data-add-row>Add row</button>
+        {# Row errors show on their own inputs; only the list's own
+           (the row cap) are plain strings here. #}
+        {% for error in bound.errors if error is string %}
+          <div class="invalid-feedback d-block">{{ error }}</div>
+        {% endfor %}
+      </fieldset>
+
+    {% else %}
+      {{ input(spec, form[spec.var_name]) }}
+    {% endif %}
+  </div>
+{% endmacro %}
+
 {% block content %}
   <div class="row justify-content-center">
     <div class="col-lg-8">
@@ -53,49 +102,14 @@
         {{ form.hidden_tag() }}
 
         {% for item in items %}
-          {% set spec = item.spec %}
-          <div class="mb-3"{{ parent_attrs(spec) }}>
-
-            {% if item.kind == "radio" %}
-              {% set bound = form["R_" + spec.name] %}
-              <fieldset>
-                <legend class="col-form-label">{{ spec.label }}</legend>
-                {% for subfield in bound %}
-                  <div class="form-check">
-                    {{ subfield(class="form-check-input") }}
-                    {{ subfield.label(class="form-check-label") }}
-                  </div>
-                {% endfor %}
-              </fieldset>
-              {% for error in bound.errors %}
-                <div class="invalid-feedback d-block">{{ error }}</div>
-              {% endfor %}
-
-            {% elif item.kind == "list" %}
-              {% set bound = form[spec.name] %}
-              {# data-next starts past the highest index in use: rows removed
-                 before a failed submit leave gaps, which FieldList accepts. #}
-              <fieldset data-list data-next="{{ bound.last_index + 1 }}">
-                <legend class="col-form-label">{{ spec.label }}</legend>
-                <ul class="list-unstyled mb-2" data-rows>
-                  {% for entry in bound %}{{ row(spec, entry.form) }}{% endfor %}
-                </ul>
-                {# "__INDEX__" is what list_rows.js swaps a real index into. The
-                   trailing "-" is explicit: WTForms only adds one to a prefix
-                   that doesn't already end in "_", and this one does. #}
-                <template>{{ row(spec, form.row_forms[spec.name](prefix=spec.name ~ "-__INDEX__-")) }}</template>
-                <button type="button" class="btn btn-outline-secondary btn-sm" data-add-row>Add row</button>
-                {# Row errors show on their own inputs; only the list's own
-                   (the row cap) are plain strings here. #}
-                {% for error in bound.errors if error is string %}
-                  <div class="invalid-feedback d-block">{{ error }}</div>
-                {% endfor %}
-              </fieldset>
-
-            {% else %}
-              {{ input(spec, form[spec.var_name]) }}
-            {% endif %}
-          </div>
+          {% if item.kind == "group" %}
+            <fieldset class="mb-3 border rounded p-3">
+              <legend class="float-none w-auto px-2 fs-6">{{ item.label }}</legend>
+              {% for member in item.members %}{{ item_block(member) }}{% endfor %}
+            </fieldset>
+          {% else %}
+            {{ item_block(item) }}
+          {% endif %}
         {% endfor %}
 
         {{ form.submit(class="btn btn-primary") }}

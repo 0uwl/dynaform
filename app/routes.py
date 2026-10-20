@@ -22,7 +22,20 @@ def _ordered_items(parsed):
     items += [("radio", g.source_pos, g) for g in parsed.radio_groups]
     items += [("list", lst.source_pos, lst) for lst in parsed.lists]
     items.sort(key=lambda item: item[1])
-    return [{"kind": kind, "spec": spec} for kind, _pos, spec in items]
+
+    # A |group("...") section sits where its first member does and gathers the
+    # rest, so it is one fieldset however far apart the members are written.
+    ordered, sections = [], {}
+    for kind, _pos, spec in items:
+        item = {"kind": kind, "spec": spec}
+        if spec.group is None:
+            ordered.append(item)
+        elif spec.group in sections:
+            sections[spec.group]["members"].append(item)
+        else:
+            sections[spec.group] = {"kind": "group", "label": spec.group, "members": [item]}
+            ordered.append(sections[spec.group])
+    return ordered
 
 
 def _values_for(specs, submitted):
