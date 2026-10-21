@@ -2,16 +2,16 @@
 {{ macros.banner() }}
 
 [Unit]
-Description={{ S_description }}
+Description={{ S_description | placeholder("My web app") }}
 After=network.target
 
 [Service]
 Type=simple
-ExecStart={{ S_exec_start }}
-{{- macros.env_line("PORT", N_port) }}
-{%- if B_restart %}
+ExecStart={{ S_exec_start | label("Command") | placeholder("/usr/bin/myapp --serve") }}
+{{- macros.env_line("PORT", N_port | optional | help("Left blank, no PORT= line is written")) }}
+{%- if B_restart | label("Restart on failure") %}
 Restart=on-failure
-RestartSec={{ N_restart_delay | default(5) }}
+RestartSec={{ N_restart_delay | label("Restart delay (seconds)") | default(5) }}
 {%- endif %}
 
 [Install]

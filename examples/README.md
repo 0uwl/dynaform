@@ -2,8 +2,12 @@
 
 Templates for trying DynaForm out. The first two test template reuse (`{% extends %}` /
 `{% include %}` / `{% import %}`, see README.md's "Reusing templates" section), the third `L_`
-lists. Copy this whole directory's contents into your `TEMPLATE_DIR`. An example that uses
-partials refuses to parse if one is left behind.
+lists. All three also use the form filters (`label`, `help`, `placeholder`, `optional`,
+`group`, see README.md's "Filters for the form" section). Copy this whole directory's contents
+into your `TEMPLATE_DIR`. An example that uses partials refuses to parse if one is left behind.
+
+The filters only count in the template you pick, not in a partial it pulls in: a filter in
+`_base.j2` or `_macros.j2` renders fine but never reaches the form.
 
 - **`nginx-site.j2`** -- extends `_base.j2`, which includes `_header.j2`. Demonstrates
   `{% block %}` + `{{ super() }}`: the child adds its own locations on top of the

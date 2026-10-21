@@ -1,16 +1,16 @@
-hostname {{ S_hostname }}
+hostname {{ S_hostname | group("Device") | placeholder("core-sw01") }}
 
-ip domain name {{ S_domain_name }}
-{%- for vlan in L_vlans %}
+ip domain name {{ S_domain_name | group("Device") | placeholder("example.net") }}
+{%- for vlan in L_vlans | group("VLANs") %}
 
-vlan {{ vlan.N_vlan_id }}
+vlan {{ vlan.N_vlan_id | help("1-4094") }}
  name {{ vlan.S_vlan_name }}
 {%- endfor %}
-{%- for interface in L_interfaces %}
+{%- for interface in L_interfaces | group("Interfaces") %}
 
-interface {{ interface.S_name }}
- description {{ interface.S_description }}
-{%- if interface.B_access %}
+interface {{ interface.S_name | placeholder("GigabitEthernet1/0/1") }}
+ description {{ interface.S_description | optional }}
+{%- if interface.B_access | label("Access port") | help("Untick for a trunk") %}
  switchport mode access
  switchport access vlan {{ interface.N_access_vlan_id | default(1) }}
  spanning-tree portfast
