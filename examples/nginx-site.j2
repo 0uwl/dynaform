@@ -1,13 +1,13 @@
 {% extends "_base.j2" %}
 {% block location %}
 {{- super() }}
-{%- for loc in L_locations %}
+{%- for loc in L_locations | group("Extra locations") %}
 
-    location {{ loc.S_path }} {
+    location {{ loc.S_path | placeholder("/api") }} {
         proxy_pass http://127.0.0.1:{{ loc.N_port }};
     }
 {%- endfor %}
-{%- if B_websockets %}
+{%- if B_websockets | label("WebSocket endpoint") | help("Proxies /ws with upgrade headers") %}
 
     location /ws {
         proxy_pass http://127.0.0.1:{{ N_port | default(80) }};
