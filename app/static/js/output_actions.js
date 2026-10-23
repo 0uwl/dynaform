@@ -47,7 +47,7 @@ document.addEventListener("DOMContentLoaded", () => {
       await copyText(output.textContent);
       announce("Copied to clipboard.");
     } catch (err) {
-      announce("Could not copy -- select the text and copy it manually.");
+      announce("Could not copy, select the text and copy it manually.");
     }
   });
 
