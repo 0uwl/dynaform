@@ -49,7 +49,7 @@
         <div class="mb-3">
           {{ form.template_text.label(class="form-label") }}
           {%- set placeholder %}{% raw %}Hello {{ S_name }}, you are {{ N_age }}.{% endraw %}{% endset %}
-          {{ form.template_text(class="form-control", rows=14, spellcheck="false",
+          {{ form.template_text(class="form-control font-monospace", rows=14, spellcheck="false",
                                 placeholder=placeholder) }}
         </div>
 

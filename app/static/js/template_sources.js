@@ -79,7 +79,7 @@ document.addEventListener("DOMContentLoaded", () => {
       } catch (err) {
         // Fall back to the server round trip rather than leaving a dead select.
         if (loadButton) loadButton.hidden = false;
-        announce(status, "Could not load that template -- use the Load into editor button.");
+        announce(status, "Template could not be loaded, use the Load into editor button.");
       }
     });
   }
@@ -93,7 +93,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // says so; here it is read in the browser instead, so correct the hint.
     if (hint) {
       hint.textContent =
-        "The file is read in your browser and shown in the editor below -- it is not uploaded.";
+        "Copies file contents into the editor below";
     }
 
     const maxBytes = Number(fileInput.dataset.maxBytes) || 0;
@@ -112,14 +112,14 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       if (maxBytes && file.size > maxBytes) {
         fileInput.value = "";
-        announce(status, `That file is too big (limit ${Math.floor(maxBytes / 1024)} KB).`);
+        announce(status, `File too big (limit ${Math.floor(maxBytes / 1024)} KB).`);
         return;
       }
       if (!mayReplaceEditor()) {
         // Declining means keeping what is in the editor, so the file has to go:
         // left attached, it would override that text on submit.
         fileInput.value = "";
-        announce(status, "Kept the text in the editor -- the file was not used.");
+        announce(status, "Kept the text in the editor. The file was not used.");
         return;
       }
 
@@ -127,7 +127,7 @@ document.addEventListener("DOMContentLoaded", () => {
         fill(await file.text());
         announce(status, `Loaded ${file.name} into the editor.`);
       } catch (err) {
-        announce(status, "Could not read that file.");
+        announce(status, "File could not be read.");
       }
     });
   }
