@@ -111,6 +111,7 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: VERSION=${{ steps.meta.outputs.version }}
           cache-from: type=gha,scope=dynaform
           cache-to: type=gha,scope=dynaform,mode=max
       # Last, so that the release means "this version built and was

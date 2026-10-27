@@ -35,6 +35,10 @@ COPY app/ app/
 ENV TEMPLATE_DIR=/templates
 RUN mkdir -p /templates && chown dynaform:dynaform /templates
 
+# Set by CI from the git tag; last so a new version doesn't bust the layer cache
+ARG VERSION=dev
+ENV DYNAFORM_VERSION=$VERSION
+
 USER dynaform
 EXPOSE 8000
 
