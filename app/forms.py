@@ -55,11 +55,11 @@ class UploadForm(FlaskForm):
         ]
 
 
-def _field_for(spec: FieldSpec):
+def _field_for(spec: FieldSpec, in_conditional_list: bool = False):
     field_cls = FIELD_CLASSES[spec.prefix]
     if spec.prefix == "B":
         validators = []
-    elif spec.parent is not None:
+    elif spec.parent is not None or in_conditional_list:
         # Conditional children (even a |required one: it may be hidden) are Optional rather than
         # cross-validated against their parent checkbox's state. Add
         # server-side "required if parent checked" if that's ever needed.
@@ -108,7 +108,8 @@ def build_dynamic_form(parsed: ParsedTemplate) -> type[FlaskForm]:
     for lst in parsed.lists:
         # A plain Form, not a FlaskForm: the outer form's CSRF token covers
         # every row, and a nested one would demand a token per row.
-        row_fields = {f.var_name: _field_for(f) for f in lst.fields}
+        # A list under a checkbox may be hidden, so its rows are optional too.
+        row_fields = {f.var_name: _field_for(f, lst.parent is not None) for f in lst.fields}
         # An unticked checkbox submits nothing, and FieldList only builds
         # the rows it sees keys for: a row of nothing but unticked B_ fields
         # would vanish. This always-sent marker keeps it. The name can't

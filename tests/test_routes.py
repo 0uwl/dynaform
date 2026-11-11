@@ -871,6 +871,20 @@ class TestLists:
         assert "location / -&gt; 3000;" in out
         assert "location /api -&gt; 8080;" in out
 
+    def test_list_under_checkbox_is_hidden_and_its_rows_optional(self, client):
+        template = "{% if B_extra %}{% for l in L_extra_items %}[{{ l.S_x }}]{% endfor %}{% endif %}"
+        resp = client.post("/", data={"template_text": template, "submit": "Parse template"})
+        page = resp.data.decode()
+        assert 'data-parent="extra" hidden' in page
+        # Box unticked, starting row left blank: still renders.
+        resp = client.post("/render", data={
+            "template_source": _extract(page, "template_source"),
+            "L_extra_items-0-present": "1",
+            "submit": "Render template",
+        })
+        assert resp.status_code == 200
+        assert "is-invalid" not in resp.data.decode()
+
     def test_row_of_unticked_checkboxes_is_kept(self, client):
         resp = client.post("/", data={
             "template_text": "{% for r in L_x %}[{{ r.B_a }}]{% endfor %}",

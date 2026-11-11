@@ -112,7 +112,9 @@ variables. Required fields, defaults and [conditional fields](#conditional-field
 in a row as anywhere else, and a list can be emptied completely, in which case the loop simply
 renders nothing. A row's checkbox only shows and hides fields in its own row: with
 `interface.B_access` and `interface.N_access_vlan_id`, ticking "Access" on one interface unfolds
-that interface's VLAN and no other.
+that interface's VLAN and no other. A whole list can also be a checkbox's child: `L_extra_items`
+stays hidden until `B_extra` is ticked (or the other way round in its `{% else %}`), and its row
+fields are optional, like any child.
 
 The rules are strict for now, and a template that breaks one is rejected with an error. These 
 are the conditions for this list function:
