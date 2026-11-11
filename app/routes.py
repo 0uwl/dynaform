@@ -130,7 +130,7 @@ def parse():
 
     if not parsed.fields and not parsed.radio_groups and not parsed.lists:
         current_app.logger.warning("Template does not contain any valid variables")
-        flash("Template has no DynaForm variables (S_/P_/N_/B_/R_/L_) to fill in.", "warning")
+        flash("Template contains no DynaForm variables to fill in.", "warning")
         return render_template("index.html", form=UploadForm()), 400
 
     current_app.logger.info(f"Template accepted: {len(parsed.fields)} field(s), {len(parsed.radio_groups)} radio group(s), {len(parsed.lists)} list(s)")
