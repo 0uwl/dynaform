@@ -15,7 +15,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "pytest==9.1.1",
+    "pytest==9.2.0",
     # Pinned: an unpinned linter changes what it enforces without a commit,
     # so it can fail CI on an unchanged codebase. ruff 0.16 widened its
     # DEFAULT rule set (isort, part of pylint) over 0.15, which is exactly
