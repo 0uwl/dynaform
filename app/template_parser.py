@@ -138,6 +138,16 @@ class ListSpec:
     source_pos: int
     fields: list[FieldSpec]  # one row's fields
     group: str | None = None
+    # A whole list can hang off a top-level checkbox like any field; these
+    # let `_assign_parents` treat it as one.
+    rest: str = ""
+    prefix: str = "L"
+    parent: str | None = None
+    show_when_unchecked: bool = False
+
+    @property
+    def var_name(self) -> str:
+        return self.name
 
 
 @dataclass
@@ -363,6 +373,7 @@ def _list_specs(
             source_pos=_first_occurrence(name, source),
             fields=sorted(fields.values(), key=lambda f: f.source_pos),
             group=list_meta.get("group"),
+            rest=rest,
         ))
     return sorted(specs, key=lambda l: l.source_pos)
 
@@ -700,7 +711,7 @@ def parse_template(
             _apply_meta(spec, var_meta)
             fields.append(spec)
 
-    checkbox_bases = _assign_parents(fields, _else_children([(
+    checkbox_bases = _assign_parents([*fields, *lists], _else_children([(
         ast, lambda n: n.name if isinstance(n, nodes.Name) and n.ctx == "load" else None
     )]))
     for group in groups.values():
@@ -713,7 +724,7 @@ def parse_template(
 
     # A conditional field has no business leaving its checkbox's section.
     sections = {f.rest: f.group for f in fields if f.prefix == "B"}
-    for spec in [*fields, *groups.values()]:
+    for spec in [*fields, *groups.values(), *lists]:
         if spec.parent and spec.group is None:
             spec.group = sections.get(spec.parent)
 

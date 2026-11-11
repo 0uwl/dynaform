@@ -461,6 +461,23 @@ class TestLists:
         assert "location /api {" in out and "127.0.0.1:8080" in out
 
 
+    def test_list_hangs_off_a_matching_top_level_checkbox(self):
+        parsed = parse_template(
+            "{% if B_extra %}{% for l in L_extra_items %}{{ l.S_x }}{% endfor %}{% endif %}"
+            "{% for o in L_other %}{{ o.S_y }}{% endfor %}"
+        )
+        by_name = {l.name: l for l in parsed.lists}
+        assert by_name["L_extra_items"].parent == "extra"
+        assert by_name["L_other"].parent is None
+
+    def test_list_only_in_else_shows_while_unchecked(self):
+        parsed = parse_template(
+            "{% if B_auto %}auto{% else %}{% for s in L_servers %}{{ s.S_ip }}{% endfor %}{% endif %}"
+        )
+        [lst] = parsed.lists
+        assert (lst.parent, lst.show_when_unchecked) == ("auto", True)
+
+
 class TestElseBranchFields:
     def _parents(self, fields):
         return {f.var_name: (f.parent, f.show_when_unchecked) for f in fields}
